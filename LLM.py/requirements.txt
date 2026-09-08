@@ -4,3 +4,4 @@ groq
 python-dotenv
 imageio-ffmpeg
 requests
+youtube-transcript-api
