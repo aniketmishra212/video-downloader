@@ -1,136 +1,139 @@
-import static_ffmpeg
-static_ffmpeg.add_paths()
 import os
-import glob
-import re
+import tempfile
 import streamlit as st
 import yt_dlp
+import imageio_ffmpeg
+from groq import Groq
 from dotenv import load_dotenv
 
+# Local development ke liye .env load karein
 load_dotenv()
 
-# Page Configuration
+# Streamlit Cloud aur local dono ke liye FFmpeg path configure karein
+FFMPEG_BINARY = imageio_ffmpeg.get_ffmpeg_exe()
+ffmpeg_dir = os.path.dirname(FFMPEG_BINARY)
+os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
+
+# Page Setup
 st.set_page_config(
-    page_title="Universal Video Downloader AI",
-    page_icon="🎥",
+    page_title="AI Video Downloader",
+    page_icon="🎬",
     layout="centered"
 )
 
-# App Header
-st.title("🎥 Universal Video Downloader AI")
-st.caption("Download high-quality videos from YouTube and Instagram in your preferred video format.")
+st.title("🎬 AI Video Downloader")
+st.caption("YouTube aur web videos download karein with automatic audio/video merge")
 
-DOWNLOAD_DIR = "downloads"
-os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+# Groq API Key access (Streamlit secrets priority, fallback to os.getenv)
+groq_api_key = None
+if "GROQ_API_KEY" in st.secrets:
+    groq_api_key = st.secrets["GROQ_API_KEY"]
+else:
+    groq_api_key = os.getenv("GROQ_API_KEY")
 
-def sanitize_filename(name: str) -> str:
-    """Removes invalid filesystem characters from media titles."""
-    return re.sub(r'[\\/*?:"<>|]', "", name).strip()
+# URL Input
+url = st.text_input("Video URL paste karein:", placeholder="https://www.youtube.com/watch?v=...")
 
-def get_video_format_rule(format_choice: str) -> dict:
-    """Configures yt-dlp to strictly download video formats."""
-    if format_choice == "MP4 - Best Available (4K / 1080p)":
-        return {
-            'format': 'bestvideo+bestaudio/best',
-            'merge_output_format': 'mp4'
-        }
-    elif format_choice == "MP4 - 720p (HD)":
-        return {
-            'format': 'bestvideo[height<=720]+bestaudio/best[height<=720]/best',
-            'merge_output_format': 'mp4'
-        }
-    elif format_choice == "MP4 - 480p (Standard)":
-        return {
-            'format': 'bestvideo[height<=480]+bestaudio/best[height<=480]/best',
-            'merge_output_format': 'mp4'
-        }
-    elif format_choice == "MKV - Best Quality Lossless":
-        return {
-            'format': 'bestvideo+bestaudio/best',
-            'merge_output_format': 'mkv'
-        }
-    elif format_choice == "WEBM - High Quality Web Video":
-        return {
-            'format': 'bestvideo[ext=webm]+bestaudio[ext=webm]/best',
-            'merge_output_format': 'webm'
-        }
-    return {'format': 'bestvideo+bestaudio/best', 'merge_output_format': 'mp4'}
+# Download Options
+col1, col2 = st.columns(2)
+with col1:
+    quality = st.selectbox(
+        "Quality chunein:",
+        ["Best Video + Best Audio (1080p+)", "720p (Single Stream)", "Audio Only (MP3)"]
+    )
 
-def run_downloader(url: str, format_choice: str):
-    format_settings = get_video_format_rule(format_choice)
-    
-    ydl_opts = {
-        **format_settings,
-        'outtmpl': f'{DOWNLOAD_DIR}/%(id)s.%(ext)s',
-        'restrictfilenames': True,
-        'quiet': True,
-        'no_warnings': True,
-    }
-    
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        video_id = info.get('id')
-        title = info.get('title', 'video_file')
-        clean_title = sanitize_filename(title)
-        
-        # Locate the downloaded video file by ID
-        matches = glob.glob(f"{DOWNLOAD_DIR}/{video_id}.*")
-        valid_files = [f for f in matches if not f.endswith(('.part', '.ytdl'))]
-        
-        if valid_files:
-            actual_file = valid_files[0]
-            ext = actual_file.rsplit('.', 1)[-1].lower()
-            return actual_file, clean_title, ext
-        
-        # Fallback: Find most recently created video file
-        all_files = glob.glob(f"{DOWNLOAD_DIR}/*")
-        valid_all = [f for f in all_files if not f.endswith(('.part', '.ytdl', '.txt'))]
-        if valid_all:
-            latest_file = max(valid_all, key=os.path.getctime)
-            ext = latest_file.rsplit('.', 1)[-1].lower()
-            return latest_file, clean_title, ext
-            
-        raise FileNotFoundError("Video file could not be found on local storage.")
+with col2:
+    verify_with_ai = st.checkbox("Verify link with Groq AI", value=False)
 
-# --- UI Form ---
-url_input = st.text_input(
-    "Enter Video URL:", 
-    placeholder="https://www.youtube.com/watch?v=... or Instagram reel URL"
-)
-
-format_option = st.selectbox(
-    "Choose Video Quality & Format:",
-    [
-        "MP4 - Best Available (4K / 1080p)",
-        "MP4 - 720p (HD)",
-        "MP4 - 480p (Standard)",
-        "MKV - Best Quality Lossless",
-        "WEBM - High Quality Web Video"
-    ]
-)
-
-if st.button("Download Video", type="primary"):
-    if not url_input.strip():
-        st.warning("Please paste a valid video URL.")
+# AI verification check
+if verify_with_ai and url:
+    if not groq_api_key:
+        st.warning("⚠️ Groq API Key configure nahi hai (Streamlit Secrets ya .env mein add karein).")
     else:
-        with st.spinner("Downloading video file... Please wait..."):
+        try:
+            client = Groq(api_key=groq_api_key)
+            completion = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "Aap ek URL verifier agent hain. User ke URL ko verify karke batayein ki kya yeh valid video link format hai ya nahi. Short 1 sentence answer dein."
+                    },
+                    {
+                        "role": "user",
+                        "content": f"Verify this URL: {url}"
+                    }
+                ],
+                max_tokens=60
+            )
+            st.info(f"🤖 **AI Agent:** {completion.choices[0].message.content.strip()}")
+        except Exception as e:
+            st.error(f"AI Verification error: {str(e)}")
+
+# Download Button Logic
+if st.button("Download Process Karein", type="primary"):
+    if not url.strip():
+        st.error("Kripya pehle valid URL dalein.")
+    else:
+        with st.spinner("Video process ho rahi hai, kripya intezar karein..."):
             try:
-                file_path, title, ext = run_downloader(url_input.strip(), format_option)
-                
-                if os.path.exists(file_path):
-                    st.success(f"Video Ready: **{title}**")
-                    
-                    # Direct in-browser video player preview
-                    st.video(file_path)
-                    
-                    with open(file_path, "rb") as f:
-                        st.download_button(
-                            label=f"💾 Save {ext.upper()} Video to Device",
-                            data=f.read(),
-                            file_name=f"{title[:50]}.{ext}",
-                            mime=f"video/{ext}"
-                        )
+                # Temporary download directory create karein
+                temp_dir = tempfile.mkdtemp()
+                output_template = os.path.join(temp_dir, "%(title)s.%(ext)s")
+
+                # Format selection logic
+                if quality == "Audio Only (MP3)":
+                    ydl_format = "bestaudio/best"
+                    postprocessors = [{
+                        'key': 'FFmpegExtractAudio',
+                        'preferredcodec': 'mp3',
+                        'preferredquality': '192',
+                    }]
+                elif quality == "720p (Single Stream)":
+                    ydl_format = "best[height<=720]"
+                    postprocessors = []
                 else:
-                    st.error("Error: Video file not found.")
+                    ydl_format = "bestvideo+bestaudio/best"
+                    postprocessors = [{
+                        'key': 'FFmpegVideoConvertor',
+                        'preferedformat': 'mp4',
+                    }]
+
+                ydl_opts = {
+                    'format': ydl_format,
+                    'outtmpl': output_template,
+                    'ffmpeg_location': FFMPEG_BINARY,
+                    'postprocessors': postprocessors,
+                    'quiet': True,
+                    'no_warnings': True,
+                }
+
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info_dict = ydl.extract_info(url, download=True)
+                    video_title = info_dict.get('title', 'downloaded_video')
+                    
+                    # Downloaded file locate karein
+                    downloaded_files = os.listdir(temp_dir)
+                    if not downloaded_files:
+                        st.error("File download nahi ho saki.")
+                    else:
+                        file_path = os.path.join(temp_dir, downloaded_files[0])
+                        file_name = os.path.basename(file_path)
+
+                        st.success(f"✅ Success! **{video_title}** taiyar hai.")
+
+                        # Video preview (agar audio nahi hai to)
+                        if not quality == "Audio Only (MP3)":
+                            st.video(file_path)
+
+                        # File download button Streamlit par
+                        with open(file_path, "rb") as f:
+                            st.download_button(
+                                label="💾 Apne device par save karein",
+                                data=f,
+                                file_name=file_name,
+                                mime="application/octet-stream"
+                            )
+
             except Exception as e:
                 st.error(f"Download Error: {str(e)}")
