@@ -1,13 +1,15 @@
 import os
 import tempfile
+import re
 import requests
 import streamlit as st
 import yt_dlp
 import imageio_ffmpeg
 from groq import Groq
 from dotenv import load_dotenv
+from youtube_transcript_api import YouTubeTranscriptApi
 
-# Load local environment variables
+# Load environment variables
 load_dotenv()
 
 # Setup portable FFmpeg binary paths
@@ -41,7 +43,13 @@ with col1:
 with col2:
     enable_transcription = st.checkbox("Generate AI Transcript & Summary", value=True)
 
-# Helper function to download stream via mobile headers without 403
+# Helper function to extract YouTube Video ID
+def get_youtube_id(video_url):
+    regex = r"(?:v=|\/)([0-9A-Za-z_-]{11}).*"
+    match = re.search(regex, video_url)
+    return match.group(1) if match else None
+
+# Helper function to download stream securely via requests
 def download_stream_to_file(stream_url, output_path):
     headers = {
         'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1',
@@ -94,73 +102,98 @@ if st.button("Process & Generate Content", type="primary"):
                         st.write(f"⏱️ **Duration:** {duration}")
                         st.write(f"👁️ **Views:** {info.get('view_count', 'N/A'):,}")
 
-                    # Audio streams filter
+                    # Standalone audio filter
                     audio_streams = [
                         f for f in formats 
-                        if f.get('vcodec') == 'none' 
-                        and f.get('acodec') != 'none' 
-                        and f.get('url')
+                        if f.get('acodec') and f.get('acodec') != 'none' and f.get('vcodec') == 'none' and f.get('url')
+                    ]
+
+                    # Fallback stream with audio (even if it contains video)
+                    fallback_streams = [
+                        f for f in formats 
+                        if f.get('acodec') and f.get('acodec') != 'none' and f.get('url')
                     ]
 
                     # AI Transcription Pipeline
                     if enable_transcription:
                         if not groq_api_key:
                             st.warning("⚠️ Groq API key is missing. Add GROQ_API_KEY to Streamlit Secrets.")
-                        elif not audio_streams:
-                            st.warning("⚠️ No direct audio stream found for transcription.")
                         else:
                             st.divider()
                             st.subheader("🤖 Groq AI Audio Transcription & Summary")
 
-                            temp_audio_file = os.path.join(tempfile.gettempdir(), 'temp_audio.m4a')
-                            try:
-                                client = Groq(api_key=groq_api_key)
-                                
-                                # Lowest bitrate audio stream select karein (chhoti size = fast transcription)
-                                target_audio_stream = audio_streams[0].get('url')
-                                
-                                with st.spinner("Fetching audio stream safely..."):
-                                    download_stream_to_file(target_audio_stream, temp_audio_file)
+                            transcription = None
+                            client = Groq(api_key=groq_api_key)
 
-                                with st.spinner("Transcribing audio using Groq Whisper-large-v3..."):
-                                    with open(temp_audio_file, "rb") as file_obj:
-                                        transcription = client.audio.transcriptions.create(
-                                            file=(os.path.basename(temp_audio_file), file_obj.read()),
-                                            model="whisper-large-v3",
-                                            response_format="text"
-                                        )
+                            # Method 1: YouTube Official Transcript API (Instant, No Audio Download Needed)
+                            yt_id = get_youtube_id(url_clean)
+                            if yt_id:
+                                try:
+                                    with st.spinner("Fetching direct captions..."):
+                                        transcript_list = YouTubeTranscriptApi.get_transcript(yt_id)
+                                        transcription = " ".join([t['text'] for t in transcript_list])
+                                except Exception:
+                                    transcription = None
 
+                            # Method 2: Whisper API via Audio/Media Stream (If captions are not present)
+                            if not transcription:
+                                target_stream_url = None
+                                if audio_streams:
+                                    target_stream_url = audio_streams[0].get('url')
+                                elif fallback_streams:
+                                    target_stream_url = fallback_streams[0].get('url')
+
+                                if not target_stream_url:
+                                    st.warning("⚠️ No valid audio stream found for transcription.")
+                                else:
+                                    temp_media_file = os.path.join(tempfile.gettempdir(), 'temp_audio.mp4')
+                                    try:
+                                        with st.spinner("Downloading audio stream for Whisper..."):
+                                            download_stream_to_file(target_stream_url, temp_media_file)
+
+                                        with st.spinner("Transcribing audio using Groq Whisper-large-v3..."):
+                                            with open(temp_media_file, "rb") as file_obj:
+                                                transcription = client.audio.transcriptions.create(
+                                                    file=(os.path.basename(temp_media_file), file_obj.read()),
+                                                    model="whisper-large-v3",
+                                                    response_format="text"
+                                                )
+                                    except Exception as ai_err:
+                                        st.error(f"Whisper Transcription Error: {str(ai_err)}")
+                                    finally:
+                                        if os.path.exists(temp_media_file):
+                                            try:
+                                                os.remove(temp_media_file)
+                                            except Exception:
+                                                pass
+
+                            # Summary Generation
+                            if transcription:
                                 with st.expander("📄 View Full Audio Transcript"):
                                     st.write(transcription)
 
                                 with st.spinner("Generating summary via Llama 3.3..."):
-                                    summary_completion = client.chat.completions.create(
-                                        model="llama-3.3-70b-versatile",
-                                        messages=[
-                                            {
-                                                "role": "system",
-                                                "content": "You are an expert summarizer. Provide a concise bulleted summary highlighting the core takeaways."
-                                            },
-                                            {
-                                                "role": "user",
-                                                "content": f"Summarize this transcript: {transcription[:4000]}"
-                                            }
-                                        ],
-                                        max_tokens=300
-                                    )
-                                    summary_text = summary_completion.choices[0].message.content.strip()
-
-                                    st.markdown("#### 📌 Key Takeaways & Summary")
-                                    st.markdown(summary_text)
-
-                            except Exception as ai_err:
-                                st.error(f"AI Transcription Error: {str(ai_err)}")
-                            finally:
-                                if os.path.exists(temp_audio_file):
                                     try:
-                                        os.remove(temp_audio_file)
-                                    except Exception:
-                                        pass
+                                        summary_completion = client.chat.completions.create(
+                                            model="llama-3.3-70b-versatile",
+                                            messages=[
+                                                {
+                                                    "role": "system",
+                                                    "content": "You are an expert summarizer. Provide a concise bulleted summary highlighting the core takeaways."
+                                                },
+                                                {
+                                                    "role": "user",
+                                                    "content": f"Summarize this transcript: {transcription[:4000]}"
+                                                }
+                                            ],
+                                            max_tokens=300
+                                        )
+                                        summary_text = summary_completion.choices[0].message.content.strip()
+
+                                        st.markdown("#### 📌 Key Takeaways & Summary")
+                                        st.markdown(summary_text)
+                                    except Exception as sum_err:
+                                        st.error(f"Summary Generation Error: {str(sum_err)}")
 
                     # Direct Download Links
                     st.divider()
@@ -169,8 +202,8 @@ if st.button("Process & Generate Content", type="primary"):
                     combined_streams = [
                         f for f in formats 
                         if f.get('ext') == 'mp4' 
-                        and f.get('vcodec') != 'none' 
-                        and f.get('acodec') != 'none' 
+                        and f.get('vcodec') and f.get('vcodec') != 'none' 
+                        and f.get('acodec') and f.get('acodec') != 'none' 
                         and f.get('url')
                     ]
 
