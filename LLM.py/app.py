@@ -1,6 +1,6 @@
-
 import os
 import tempfile
+import requests
 import streamlit as st
 import yt_dlp
 import imageio_ffmpeg
@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 # Load local environment variables
 load_dotenv()
 
-# Setup portable FFmpeg binary paths for local and cloud runtimes
+# Setup portable FFmpeg binary paths
 FFMPEG_BINARY = imageio_ffmpeg.get_ffmpeg_exe()
 ffmpeg_dir = os.path.dirname(FFMPEG_BINARY)
 os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
@@ -23,24 +23,37 @@ st.set_page_config(
 )
 
 st.title("🎙️ AI Media Downloader & Transcriber")
-st.caption("Extract direct video streams, download audio, and generate instant AI transcript summaries via Groq")
+st.caption("Direct streams, audio extraction, and AI summary via Groq")
 
-# Groq API Key Setup (Prioritize Streamlit Secrets, fallback to env)
+# Groq API Key Setup
 groq_api_key = st.secrets.get("GROQ_API_KEY", os.getenv("GROQ_API_KEY"))
 
 # Video URL input
-url = st.text_input("Enter Video or Media URL:", placeholder="https://www.youtube.com/watch?v=...")
+url = st.text_input("Enter Video URL:", placeholder="https://www.youtube.com/watch?v=...")
 
-# Advanced Feature Options
 col1, col2 = st.columns(2)
 with col1:
     selected_country = st.selectbox(
-        "Target Region (Geo-Bypass):",
+        "Target Region:",
         ["US", "GB", "DE", "JP", "FR", "IN"],
         index=0
     )
 with col2:
     enable_transcription = st.checkbox("Generate AI Transcript & Summary", value=True)
+
+# Helper function to download stream via mobile headers without 403
+def download_stream_to_file(stream_url, output_path):
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1',
+        'Accept': '*/*',
+        'Connection': 'keep-alive'
+    }
+    response = requests.get(stream_url, headers=headers, stream=True, timeout=60)
+    response.raise_for_status()
+    with open(output_path, 'wb') as f:
+        for chunk in response.iter_content(chunk_size=1024 * 1024):
+            if chunk:
+                f.write(chunk)
 
 # Main Processing Execution
 if st.button("Process & Generate Content", type="primary"):
@@ -49,9 +62,8 @@ if st.button("Process & Generate Content", type="primary"):
     if not url_clean or not (url_clean.startswith("http://") or url_clean.startswith("https://")):
         st.error("Please enter a valid video link starting with http:// or https://")
     else:
-        with st.spinner("Processing media streams and running AI pipelines, please wait..."):
+        with st.spinner("Extracting media streams and info, please wait..."):
             try:
-                # 1. yt-dlp Options for Stream Extraction & Temporary Audio Download
                 ydl_opts = {
                     'quiet': True,
                     'no_warnings': True,
@@ -72,9 +84,8 @@ if st.button("Process & Generate Content", type="primary"):
                     duration = info.get('duration_string', 'N/A')
                     formats = info.get('formats', [])
 
-                    st.success(f"✅ Successfully Processed: **{title}**")
+                    st.success(f"✅ Extracted: **{title}**")
 
-                    # Display Metadata & Thumbnail
                     c1, c2 = st.columns([1, 2])
                     with c1:
                         if thumbnail:
@@ -83,77 +94,75 @@ if st.button("Process & Generate Content", type="primary"):
                         st.write(f"⏱️ **Duration:** {duration}")
                         st.write(f"👁️ **Views:** {info.get('view_count', 'N/A'):,}")
 
-                    # 2. AI Transcription & Summary Pipeline (Using Groq Whisper & Llama)
+                    # Audio streams filter
+                    audio_streams = [
+                        f for f in formats 
+                        if f.get('vcodec') == 'none' 
+                        and f.get('acodec') != 'none' 
+                        and f.get('url')
+                    ]
+
+                    # AI Transcription Pipeline
                     if enable_transcription:
                         if not groq_api_key:
-                            st.warning("⚠️ Groq API key is missing. Skipping AI transcription. Add GROQ_API_KEY to secrets.")
+                            st.warning("⚠️ Groq API key is missing. Add GROQ_API_KEY to Streamlit Secrets.")
+                        elif not audio_streams:
+                            st.warning("⚠️ No direct audio stream found for transcription.")
                         else:
                             st.divider()
                             st.subheader("🤖 Groq AI Audio Transcription & Summary")
-                            
+
+                            temp_audio_file = os.path.join(tempfile.gettempdir(), 'temp_audio.m4a')
                             try:
                                 client = Groq(api_key=groq_api_key)
                                 
-                                # Download temporary audio file for Whisper transcription
-                                audio_opts = {
-                                    'format': 'bestaudio/best',
-                                    'postprocessors': [{
-                                        'key': 'FFmpegExtractAudio',
-                                        'preferredcodec': 'mp3',
-                                        'preferredquality': '128',
-                                    }],
-                                    'outtmpl': os.path.join(tempfile.gettempdir(), 'temp_audio.%(ext)s'),
-                                    'quiet': True,
-                                    'ffmpeg_location': FFMPEG_BINARY
-                                }
+                                # Lowest bitrate audio stream select karein (chhoti size = fast transcription)
+                                target_audio_stream = audio_streams[0].get('url')
                                 
-                                with yt_dlp.YoutubeDL(audio_opts) as audio_ydl:
-                                    audio_ydl.download([url_clean])
-                                
-                                audio_file_path = os.path.join(tempfile.gettempdir(), 'temp_audio.mp3')
-                                
-                                if os.path.exists(audio_file_path):
-                                    with st.spinner("Transcribing audio using Groq Whisper model..."):
-                                        with open(audio_file_path, "rb") as file:
-                                            transcription = client.audio.transcriptions.create(
-                                                file=(os.path.basename(audio_file_path), file.read()),
-                                                model="whisper-large-v3",
-                                                response_format="text"
-                                            )
-                                    
-                                    # Display Transcript expander
-                                    with st.expander("📄 View Full Audio Transcript"):
-                                        st.write(transcription)
+                                with st.spinner("Fetching audio stream safely..."):
+                                    download_stream_to_file(target_audio_stream, temp_audio_file)
 
-                                    # Generate AI Summary using Llama model based on transcript
-                                    with st.spinner("Generating executive summary..."):
-                                        summary_completion = client.chat.completions.create(
-                                            model="llama-3.3-70b-versatile",
-                                            messages=[
-                                                {
-                                                    "role": "system",
-                                                    "content": "You are an expert content summarizer. Provide a concise bulleted summary of the following transcript highlighting core takeaways."
-                                                },
-                                                {
-                                                    "role": "user",
-                                                    "content": f"Summarize this transcript: {transcription[:4000]}" # Truncate token limit safety
-                                                }
-                                            ],
-                                            max_tokens=300
+                                with st.spinner("Transcribing audio using Groq Whisper-large-v3..."):
+                                    with open(temp_audio_file, "rb") as file_obj:
+                                        transcription = client.audio.transcriptions.create(
+                                            file=(os.path.basename(temp_audio_file), file_obj.read()),
+                                            model="whisper-large-v3",
+                                            response_format="text"
                                         )
-                                        summary_text = summary_completion.choices[0].message.content.strip()
-                                        
-                                        st.markdown("#### 📌 Key Takeaways & Summary")
-                                        st.markdown(summary_text)
 
-                                    # Cleanup temp audio file
-                                    if os.path.exists(audio_file_path):
-                                        os.remove(audio_file_path)
+                                with st.expander("📄 View Full Audio Transcript"):
+                                    st.write(transcription)
+
+                                with st.spinner("Generating summary via Llama 3.3..."):
+                                    summary_completion = client.chat.completions.create(
+                                        model="llama-3.3-70b-versatile",
+                                        messages=[
+                                            {
+                                                "role": "system",
+                                                "content": "You are an expert summarizer. Provide a concise bulleted summary highlighting the core takeaways."
+                                            },
+                                            {
+                                                "role": "user",
+                                                "content": f"Summarize this transcript: {transcription[:4000]}"
+                                            }
+                                        ],
+                                        max_tokens=300
+                                    )
+                                    summary_text = summary_completion.choices[0].message.content.strip()
+
+                                    st.markdown("#### 📌 Key Takeaways & Summary")
+                                    st.markdown(summary_text)
 
                             except Exception as ai_err:
-                                st.error(f"AI Transcription/Summary Error: {str(ai_err)}")
+                                st.error(f"AI Transcription Error: {str(ai_err)}")
+                            finally:
+                                if os.path.exists(temp_audio_file):
+                                    try:
+                                        os.remove(temp_audio_file)
+                                    except Exception:
+                                        pass
 
-                    # 3. Direct Download Links Section
+                    # Direct Download Links
                     st.divider()
                     st.subheader("📥 Direct Download Links")
 
@@ -161,13 +170,6 @@ if st.button("Process & Generate Content", type="primary"):
                         f for f in formats 
                         if f.get('ext') == 'mp4' 
                         and f.get('vcodec') != 'none' 
-                        and f.get('acodec') != 'none' 
-                        and f.get('url')
-                    ]
-
-                    audio_streams = [
-                        f for f in formats 
-                        if f.get('vcodec') == 'none' 
                         and f.get('acodec') != 'none' 
                         and f.get('url')
                     ]
@@ -182,7 +184,7 @@ if st.button("Process & Generate Content", type="primary"):
                             st.markdown(f"- **{res}**{size_str} ➔ [Open / Download Video]({stream_url})")
 
                     if audio_streams:
-                        st.markdown("#### 🎵 Audio Streams (MP3)")
+                        st.markdown("#### 🎵 Audio Streams")
                         best_audio = audio_streams[-1]
                         abr = best_audio.get('abr', '128')
                         st.markdown(f"- **Audio ({abr} kbps)** ➔ [Open / Download Audio]({best_audio.get('url')})")
