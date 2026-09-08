@@ -22,7 +22,7 @@ st.set_page_config(
 )
 
 st.title("🎬 AI Video Downloader")
-st.caption("YouTube aur web videos download karein with automatic audio/video merge")
+st.caption("YouTube aur web videos download karein without 403 errors")
 
 # Groq API Key access (Secrets ko pehle check karega, fir .env)
 groq_api_key = st.secrets.get("GROQ_API_KEY", os.getenv("GROQ_API_KEY"))
@@ -36,8 +36,8 @@ with col1:
     quality = st.selectbox(
         "Quality chunein:",
         [
-            "Best Available (1080p / 4K Merged)",
-            "720p (Fast Download)",
+            "Best Available (Merged MP4)",
+            "720p / Balanced",
             "Audio Only (MP3)"
         ]
     )
@@ -57,7 +57,7 @@ if verify_with_ai and url:
                 messages=[
                     {
                         "role": "system",
-                        "content": "Aap ek URL verifier agent hain. Check karein ki user ka URL ek valid video streamable platform (jaise YouTube, Instagram, etc.) ka link hai ya nahi. Short single sentence mein Hindi/Hinglish mein answer dein."
+                        "content": "Aap ek URL verifier agent hain. Check karein ki user ka URL ek valid video stream link hai ya nahi. Short single sentence mein answer dein."
                     },
                     {
                         "role": "user",
@@ -72,16 +72,22 @@ if verify_with_ai and url:
 
 # Download Button Logic
 if st.button("Download Process Karein", type="primary"):
-    if not url.strip():
+    url_clean = url.strip()
+    
+    # Input Validation
+    if not url_clean:
         st.error("Kripya pehle valid URL dalein.")
+    elif not (url_clean.startswith("http://") or url_clean.startswith("https://")):
+        st.error("❌ Yeh valid URL nahi hai! Kripya 'https://' se shuru hone wala link dalein.")
+    elif "\n" in url_clean or "import " in url_clean or " " in url_clean:
+        st.error("❌ Invalid link format detected.")
     else:
-        with st.spinner("Video process ho rahi hai, kripya intezar karein..."):
+        with st.spinner("Video stream fetch aur process ho rahi hai, kripya intezar karein..."):
             try:
-                # Temporary download directory
                 temp_dir = tempfile.mkdtemp()
                 output_template = os.path.join(temp_dir, "%(title)s.%(ext)s")
 
-                # Format selection logic with multiple fallbacks
+                # Format selection with fail-safe fallbacks
                 if quality == "Audio Only (MP3)":
                     ydl_format = "bestaudio/best"
                     postprocessors = [{
@@ -89,21 +95,20 @@ if st.button("Download Process Karein", type="primary"):
                         'preferredcodec': 'mp3',
                         'preferredquality': '192',
                     }]
-                elif quality == "720p (Fast Download)":
-                    # Progressive 720p pehle dekhega, na mile to adaptive video+audio merge karega
+                elif quality == "720p / Balanced":
                     ydl_format = "best[height<=720]/bestvideo[height<=720]+bestaudio/best"
                     postprocessors = [{
                         'key': 'FFmpegVideoConvertor',
                         'preferedformat': 'mp4',
                     }]
                 else:
-                    # Best video + best audio with generic fallback
-                    ydl_format = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
+                    ydl_format = "bestvideo+bestaudio/best"
                     postprocessors = [{
                         'key': 'FFmpegVideoConvertor',
                         'preferedformat': 'mp4',
                     }]
 
+                # YouTube 403 Forbidden Anti-Block Configuration
                 ydl_opts = {
                     'format': ydl_format,
                     'outtmpl': output_template,
@@ -113,32 +118,46 @@ if st.button("Download Process Karein", type="primary"):
                     'noplaylist': True,
                     'quiet': True,
                     'no_warnings': True,
+                    'nocheckcertificate': True,
+                    # YouTube 403 bypass: Android & iOS client emulate karein
+                    'extractor_args': {
+                        'youtube': {
+                            'player_client': ['android', 'ios', 'web'],
+                            'skip': ['hls', 'dash']
+                        }
+                    },
+                    'http_headers': {
+                        'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                        'Accept-Language': 'en-us,en;q=0.5',
+                        'Sec-Fetch-Mode': 'navigate',
+                    }
                 }
 
                 # Download execution
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info_dict = ydl.extract_info(url, download=True)
+                    info_dict = ydl.extract_info(url_clean, download=True)
                     video_title = info_dict.get('title', 'downloaded_video')
 
-                    # Downloaded file retrieve karein
+                    # Locate downloaded file
                     downloaded_files = [
                         f for f in os.listdir(temp_dir) 
                         if not f.endswith('.part') and not f.endswith('.ytdl')
                     ]
                     
                     if not downloaded_files:
-                        st.error("File download nahi ho saki.")
+                        st.error("File processing complete nahi ho saki.")
                     else:
                         file_path = os.path.join(temp_dir, downloaded_files[0])
                         file_name = os.path.basename(file_path)
 
                         st.success(f"✅ Success! **{video_title}** taiyar hai.")
 
-                        # Preview video if not MP3
+                        # Preview if video
                         if quality != "Audio Only (MP3)":
                             st.video(file_path)
 
-                        # Download button
+                        # File Download Button
                         with open(file_path, "rb") as f:
                             st.download_button(
                                 label="💾 Apne device par save karein",
