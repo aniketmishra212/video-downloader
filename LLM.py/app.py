@@ -17,7 +17,7 @@ st.set_page_config(
 )
 
 st.title("🎙️ AI Media Downloader & Transcriber")
-st.caption("Cloud-safe stream links & zero-latency AI summaries via Groq")
+st.caption("Cloud-safe stream links & dynamic AI summaries via Groq")
 
 # Groq API Key Setup
 groq_api_key = st.secrets.get("GROQ_API_KEY", os.getenv("GROQ_API_KEY"))
@@ -35,7 +35,7 @@ with col1:
 with col2:
     enable_transcription = st.checkbox("Generate AI Transcript & Summary", value=True)
 
-# Helper function to extract YouTube Video ID cleanly
+# Helper function to extract YouTube Video ID
 def get_youtube_id(video_url):
     patterns = [
         r"(?:v=|\/|youtu\.be\/|embed\/|shorts\/)([0-9A-Za-z_-]{11})"
@@ -78,6 +78,34 @@ def fetch_safe_transcript(video_id):
     except Exception:
         return None
 
+# Helper function to get an active, working text model dynamically from Groq
+def get_working_groq_model(client):
+    try:
+        models_data = client.models.list()
+        available_ids = [m.id for m in models_data.data if hasattr(m, 'id')]
+        
+        # Priority list of known chat models
+        preferred_models = [
+            "llama-3.3-70b-versatile",
+            "llama-3.1-70b-versatile",
+            "llama-3.1-8b-instant",
+            "mixtral-8x7b-32768",
+            "gemma2-9b-it"
+        ]
+        
+        for pref in preferred_models:
+            if pref in available_ids:
+                return pref
+                
+        # If none of the preferred match, pick any non-whisper model
+        for m_id in available_ids:
+            if "whisper" not in m_id.lower() and "guard" not in m_id.lower():
+                return m_id
+                
+        return "llama-3.1-8b-instant"
+    except Exception:
+        return "llama-3.1-8b-instant"
+
 # Main Processing Execution
 if st.button("Process & Generate Content", type="primary"):
     url_clean = url.strip()
@@ -87,7 +115,6 @@ if st.button("Process & Generate Content", type="primary"):
     else:
         with st.spinner("Extracting media streams and info..."):
             try:
-                # Metadata extraction only to avoid 403 blocks on cloud servers
                 ydl_opts = {
                     'quiet': True,
                     'no_warnings': True,
@@ -135,7 +162,6 @@ if st.button("Process & Generate Content", type="primary"):
                                 with st.spinner("Extracting transcript data (Cloud-safe)..."):
                                     transcription_text = fetch_safe_transcript(video_id)
 
-                            # If no spoken transcript found, use video description as context
                             context_source = "Transcript"
                             content_to_summarize = transcription_text
 
@@ -149,47 +175,32 @@ if st.button("Process & Generate Content", type="primary"):
                                     with st.expander("📄 View Full Video Transcript"):
                                         st.write(transcription_text)
 
-                                with st.spinner("Generating AI summary via Groq Llama..."):
+                                with st.spinner("Selecting active Groq model and generating summary..."):
                                     try:
-                                        # Primary model: llama-3.1-70b-versatile, Fallback: llama-3.1-8b-instant
-                                        try:
-                                            summary_completion = client.chat.completions.create(
-                                                model="llama-3.1-70b-versatile",
-                                                messages=[
-                                                    {
-                                                        "role": "system",
-                                                        "content": (
-                                                            "You are an expert executive content analyst. "
-                                                            "Provide a clear, high-impact bulleted summary of the core concepts, "
-                                                            "key arguments, and action steps from the provided text."
-                                                        )
-                                                    },
-                                                    {
-                                                        "role": "user",
-                                                        "content": f"Analyze this {context_source}:\n\n{content_to_summarize[:4500]}"
-                                                    }
-                                                ],
-                                                max_tokens=350
-                                            )
-                                        except Exception:
-                                            summary_completion = client.chat.completions.create(
-                                                model="llama-3.1-8b-instant",
-                                                messages=[
-                                                    {
-                                                        "role": "system",
-                                                        "content": "You are an expert executive content analyst. Provide a clear bulleted summary."
-                                                    },
-                                                    {
-                                                        "role": "user",
-                                                        "content": f"Analyze this text:\n\n{content_to_summarize[:4500]}"
-                                                    }
-                                                ],
-                                                max_tokens=350
-                                            )
+                                        active_model = get_working_groq_model(client)
+                                        
+                                        summary_completion = client.chat.completions.create(
+                                            model=active_model,
+                                            messages=[
+                                                {
+                                                    "role": "system",
+                                                    "content": (
+                                                        "You are an expert executive content analyst. "
+                                                        "Provide a clear, high-impact bulleted summary of the core concepts, "
+                                                        "key arguments, and action steps from the provided text."
+                                                    )
+                                                },
+                                                {
+                                                    "role": "user",
+                                                    "content": f"Analyze this {context_source}:\n\n{content_to_summarize[:4500]}"
+                                                }
+                                            ],
+                                            max_tokens=350
+                                        )
 
                                         summary_res = summary_completion.choices[0].message.content.strip()
 
-                                        st.markdown("#### 📌 Key Takeaways & Actionable Summary")
+                                        st.markdown(f"#### 📌 Key Takeaways & Actionable Summary `({active_model})`")
                                         st.markdown(summary_res)
 
                                     except Exception as sum_err:
