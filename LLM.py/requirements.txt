@@ -2,6 +2,4 @@ streamlit
 yt-dlp>=2024.08.06
 groq
 python-dotenv
-imageio-ffmpeg
-requests
 youtube-transcript-api
