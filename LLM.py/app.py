@@ -1,20 +1,13 @@
 import os
-import tempfile
 import re
 import streamlit as st
 import yt_dlp
-import imageio_ffmpeg
 from groq import Groq
 from dotenv import load_dotenv
-from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
 
-# Load environment variables
+# Load local environment variables
 load_dotenv()
-
-# Setup portable FFmpeg binary paths
-FFMPEG_BINARY = imageio_ffmpeg.get_ffmpeg_exe()
-ffmpeg_dir = os.path.dirname(FFMPEG_BINARY)
-os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
 
 # Page Configuration
 st.set_page_config(
@@ -24,7 +17,7 @@ st.set_page_config(
 )
 
 st.title("🎙️ AI Media Downloader & Transcriber")
-st.caption("Direct streams, audio extraction, and AI summary via Groq")
+st.caption("Cloud-safe stream links & zero-latency AI summaries via Groq")
 
 # Groq API Key Setup
 groq_api_key = st.secrets.get("GROQ_API_KEY", os.getenv("GROQ_API_KEY"))
@@ -42,41 +35,48 @@ with col1:
 with col2:
     enable_transcription = st.checkbox("Generate AI Transcript & Summary", value=True)
 
-# Helper function to extract YouTube Video ID
+# Helper function to extract YouTube Video ID cleanly
 def get_youtube_id(video_url):
-    regex = r"(?:v=|\/|youtu\.be\/)([0-9A-Za-z_-]{11})"
-    match = re.search(regex, video_url)
-    return match.group(1) if match else None
+    patterns = [
+        r"(?:v=|\/|youtu\.be\/|embed\/|shorts\/)([0-9A-Za-z_-]{11})"
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, video_url)
+        if match:
+            return match.group(1)
+    return None
 
-# Helper function to safely fetch audio using yt-dlp internal downloader
-def download_audio_safe(video_url, output_path, country):
-    ydl_audio_opts = {
-        'format': 'ba/b[ext=m4a]/b',
-        'outtmpl': output_path,
-        'quiet': True,
-        'no_warnings': True,
-        'noplaylist': True,
-        'geo_bypass': True,
-        'geo_bypass_country': country,
-        'ffmpeg_location': FFMPEG_BINARY,
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '64',  # Light size for fast transcription
-        }],
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['android', 'ios'],
-                'skip': ['hls', 'dash']
-            }
-        },
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-            'Accept-Language': 'en-US,en;q=0.9',
-        }
-    }
-    with yt_dlp.YoutubeDL(ydl_audio_opts) as ydl:
-        ydl.download([video_url])
+# Helper to fetch transcript without downloading audio
+def fetch_safe_transcript(video_id):
+    try:
+        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        
+        # 1. Try manual transcript (English or Hindi)
+        try:
+            transcript = transcript_list.find_manually_created_transcript(['en', 'en-US', 'hi', 'hi-Latn'])
+            return " ".join([item['text'] for item in transcript.fetch()])
+        except Exception:
+            pass
+
+        # 2. Try generated transcript (English or Hindi)
+        try:
+            transcript = transcript_list.find_generated_transcript(['en', 'en-US', 'hi', 'hi-Latn'])
+            return " ".join([item['text'] for item in transcript.fetch()])
+        except Exception:
+            pass
+
+        # 3. Fallback: Take the first available transcript and translate to English
+        for t in transcript_list:
+            try:
+                translated = t.translate('en')
+                return " ".join([item['text'] for item in translated.fetch()])
+            except Exception:
+                return " ".join([item['text'] for item in t.fetch()])
+
+    except (TranscriptsDisabled, NoTranscriptFound):
+        return None
+    except Exception:
+        return None
 
 # Main Processing Execution
 if st.button("Process & Generate Content", type="primary"):
@@ -85,8 +85,9 @@ if st.button("Process & Generate Content", type="primary"):
     if not url_clean or not (url_clean.startswith("http://") or url_clean.startswith("https://")):
         st.error("Please enter a valid video link starting with http:// or https://")
     else:
-        with st.spinner("Extracting media streams and info, please wait..."):
+        with st.spinner("Extracting media streams and info..."):
             try:
+                # Metadata and stream extraction only (No local download = No 403 Forbidden)
                 ydl_opts = {
                     'quiet': True,
                     'no_warnings': True,
@@ -105,9 +106,10 @@ if st.button("Process & Generate Content", type="primary"):
                     title = info.get('title', 'Media_Content')
                     thumbnail = info.get('thumbnail')
                     duration = info.get('duration_string', 'N/A')
+                    description = info.get('description', '')
                     formats = info.get('formats', [])
 
-                    st.success(f"✅ Extracted: **{title}**")
+                    st.success(f"✅ Successfully Found: **{title}**")
 
                     c1, c2 = st.columns([1, 2])
                     with c1:
@@ -117,91 +119,70 @@ if st.button("Process & Generate Content", type="primary"):
                         st.write(f"⏱️ **Duration:** {duration}")
                         st.write(f"👁️ **Views:** {info.get('view_count', 'N/A'):,}")
 
-                    # AI Transcription Pipeline
+                    # AI Transcription & Summary Pipeline
                     if enable_transcription:
                         if not groq_api_key:
                             st.warning("⚠️ Groq API key is missing. Add GROQ_API_KEY to Streamlit Secrets.")
                         else:
                             st.divider()
-                            st.subheader("🤖 Groq AI Audio Transcription & Summary")
+                            st.subheader("🤖 Groq AI Content Intelligence")
 
-                            transcription = None
                             client = Groq(api_key=groq_api_key)
+                            video_id = get_youtube_id(url_clean)
+                            transcription_text = None
 
-                            # Method 1: YouTube Official Subtitles / Captions (Zero bandwidth, 100% bypass 403)
-                            yt_id = get_youtube_id(url_clean)
-                            if yt_id:
-                                try:
-                                    with st.spinner("Searching for native subtitles/captions..."):
-                                        transcript_list = YouTubeTranscriptApi.list_transcripts(yt_id)
-                                        # First find manual or auto captions (en, hi, etc.)
-                                        try:
-                                            transcript_obj = transcript_list.find_transcript(['en', 'en-US', 'hi', 'hi-Latn'])
-                                        except Exception:
-                                            transcript_obj = next(iter(transcript_list))
-                                        
-                                        data = transcript_obj.fetch()
-                                        transcription = " ".join([t['text'] for t in data])
-                                except Exception:
-                                    transcription = None
+                            if video_id:
+                                with st.spinner("Extracting transcript data (Cloud-safe)..."):
+                                    transcription_text = fetch_safe_transcript(video_id)
 
-                            # Method 2: Safe yt-dlp Audio Fetch for Whisper (if captions are unavailable)
-                            if not transcription:
-                                temp_base = os.path.join(tempfile.gettempdir(), 'audio_payload')
-                                target_mp3 = f"{temp_base}.mp3"
+                            # If no spoken transcript found, use video description as context
+                            context_source = "Transcript"
+                            content_to_summarize = transcription_text
 
-                                try:
-                                    with st.spinner("Downloading audio track for Groq Whisper..."):
-                                        download_audio_safe(url_clean, temp_base, selected_country)
+                            if not content_to_summarize and description:
+                                content_to_summarize = description[:3000]
+                                context_source = "Video Overview & Description"
+                                st.info("ℹ️ Captions were not present for this video; generating summary from official video details.")
 
-                                    if os.path.exists(target_mp3):
-                                        with st.spinner("Transcribing via Groq Whisper-large-v3..."):
-                                            with open(target_mp3, "rb") as file_obj:
-                                                transcription = client.audio.transcriptions.create(
-                                                    file=(os.path.basename(target_mp3), file_obj.read()),
-                                                    model="whisper-large-v3",
-                                                    response_format="text"
-                                                )
-                                except Exception as ai_err:
-                                    st.warning(f"Audio download blocked by platform CDN: {str(ai_err)}. Direct download links are still available below.")
-                                finally:
-                                    if os.path.exists(target_mp3):
-                                        try:
-                                            os.remove(target_mp3)
-                                        except Exception:
-                                            pass
+                            if content_to_summarize:
+                                if transcription_text:
+                                    with st.expander("📄 View Full Video Transcript"):
+                                        st.write(transcription_text)
 
-                            # Summary Generation
-                            if transcription:
-                                with st.expander("📄 View Full Audio Transcript"):
-                                    st.write(transcription)
-
-                                with st.spinner("Generating executive summary via Llama 3.3..."):
+                                with st.spinner("Generating AI summary via Llama-3.3-70b..."):
                                     try:
                                         summary_completion = client.chat.completions.create(
                                             model="llama-3.3-70b-versatile",
                                             messages=[
                                                 {
                                                     "role": "system",
-                                                    "content": "You are an expert summarizer. Provide a concise bulleted summary highlighting the core takeaways."
+                                                    "content": (
+                                                        "You are an expert executive content analyst. "
+                                                        "Provide a clear, high-impact bulleted summary of the core concepts, "
+                                                        "key arguments, and action steps from the provided text."
+                                                    )
                                                 },
                                                 {
                                                     "role": "user",
-                                                    "content": f"Summarize this transcript: {transcription[:4000]}"
+                                                    "content": f"Analyze this {context_source}:\n\n{content_to_summarize[:4500]}"
                                                 }
                                             ],
-                                            max_tokens=300
+                                            max_tokens=350
                                         )
-                                        summary_text = summary_completion.choices[0].message.content.strip()
+                                        summary_res = summary_completion.choices[0].message.content.strip()
 
-                                        st.markdown("#### 📌 Key Takeaways & Summary")
-                                        st.markdown(summary_text)
+                                        st.markdown("#### 📌 Key Takeaways & Actionable Summary")
+                                        st.markdown(summary_res)
+
                                     except Exception as sum_err:
-                                        st.error(f"Summary Generation Error: {str(sum_err)}")
+                                        st.error(f"Summary Error: {str(sum_err)}")
+                            else:
+                                st.warning("⚠️ No captions or descriptions found to generate summary.")
 
-                    # Direct Download Links
+                    # Direct Download Streams
                     st.divider()
-                    st.subheader("📥 Direct Download Links")
+                    st.subheader("📥 Direct Download Streams")
+                    st.caption("💡 Right-click any stream link and select 'Save Link As...' to download directly onto your device.")
 
                     combined_streams = [
                         f for f in formats 
@@ -228,7 +209,7 @@ if st.button("Process & Generate Content", type="primary"):
                             st.markdown(f"- **{res}**{size_str} ➔ [Open / Download Video]({stream_url})")
 
                     if audio_streams:
-                        st.markdown("#### 🎵 Audio Streams")
+                        st.markdown("#### 🎵 Audio Streams (Direct Track)")
                         best_audio = audio_streams[-1]
                         abr = best_audio.get('abr', '128')
                         st.markdown(f"- **Audio ({abr} kbps)** ➔ [Open / Download Audio]({best_audio.get('url')})")
