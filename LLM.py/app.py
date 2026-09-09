@@ -46,7 +46,7 @@ def get_youtube_id(video_url):
             return match.group(1)
     return None
 
-# Helper to fetch transcript without downloading audio
+# Helper to fetch transcript safely without byte downloads
 def fetch_safe_transcript(video_id):
     try:
         transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
@@ -65,7 +65,7 @@ def fetch_safe_transcript(video_id):
         except Exception:
             pass
 
-        # 3. Fallback: Take the first available transcript and translate to English
+        # 3. Fallback: Take first available transcript and translate to English
         for t in transcript_list:
             try:
                 translated = t.translate('en')
@@ -87,7 +87,7 @@ if st.button("Process & Generate Content", type="primary"):
     else:
         with st.spinner("Extracting media streams and info..."):
             try:
-                # Metadata and stream extraction only (No local download = No 403 Forbidden)
+                # Metadata extraction only to avoid 403 blocks on cloud servers
                 ydl_opts = {
                     'quiet': True,
                     'no_warnings': True,
@@ -149,26 +149,44 @@ if st.button("Process & Generate Content", type="primary"):
                                     with st.expander("📄 View Full Video Transcript"):
                                         st.write(transcription_text)
 
-                                with st.spinner("Generating AI summary via Llama-3.3-70b..."):
+                                with st.spinner("Generating AI summary via Groq Llama..."):
                                     try:
-                                        summary_completion = client.chat.completions.create(
-                                            model="llama-3.3-70b-versatile",
-                                            messages=[
-                                                {
-                                                    "role": "system",
-                                                    "content": (
-                                                        "You are an expert executive content analyst. "
-                                                        "Provide a clear, high-impact bulleted summary of the core concepts, "
-                                                        "key arguments, and action steps from the provided text."
-                                                    )
-                                                },
-                                                {
-                                                    "role": "user",
-                                                    "content": f"Analyze this {context_source}:\n\n{content_to_summarize[:4500]}"
-                                                }
-                                            ],
-                                            max_tokens=350
-                                        )
+                                        # Primary model: llama-3.1-70b-versatile, Fallback: llama-3.1-8b-instant
+                                        try:
+                                            summary_completion = client.chat.completions.create(
+                                                model="llama-3.1-70b-versatile",
+                                                messages=[
+                                                    {
+                                                        "role": "system",
+                                                        "content": (
+                                                            "You are an expert executive content analyst. "
+                                                            "Provide a clear, high-impact bulleted summary of the core concepts, "
+                                                            "key arguments, and action steps from the provided text."
+                                                        )
+                                                    },
+                                                    {
+                                                        "role": "user",
+                                                        "content": f"Analyze this {context_source}:\n\n{content_to_summarize[:4500]}"
+                                                    }
+                                                ],
+                                                max_tokens=350
+                                            )
+                                        except Exception:
+                                            summary_completion = client.chat.completions.create(
+                                                model="llama-3.1-8b-instant",
+                                                messages=[
+                                                    {
+                                                        "role": "system",
+                                                        "content": "You are an expert executive content analyst. Provide a clear bulleted summary."
+                                                    },
+                                                    {
+                                                        "role": "user",
+                                                        "content": f"Analyze this text:\n\n{content_to_summarize[:4500]}"
+                                                    }
+                                                ],
+                                                max_tokens=350
+                                            )
+
                                         summary_res = summary_completion.choices[0].message.content.strip()
 
                                         st.markdown("#### 📌 Key Takeaways & Actionable Summary")
