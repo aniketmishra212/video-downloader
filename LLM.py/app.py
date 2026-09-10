@@ -9,31 +9,121 @@ from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, No
 # Load local environment variables
 load_dotenv()
 
-# Page Configuration
+# Page Setup
 st.set_page_config(
-    page_title="AI Media & Transcription Hub",
-    page_icon="🎙️",
-    layout="centered"
+    page_title="MediaFlow AI | Video Intelligence & Dubbing Suite",
+    page_icon="⚡",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-st.title("🎙️ AI Media Downloader & Transcriber")
-st.caption("Cloud-safe stream links & dynamic AI summaries via Groq")
+# Custom SaaS-style CSS
+st.markdown("""
+<style>
+    /* Global Styles */
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 3rem;
+        max-width: 1100px;
+    }
+    
+    /* Modern Header */
+    .main-title {
+        font-size: 2.3rem;
+        font-weight: 800;
+        background: linear-gradient(90deg, #38bdf8, #818cf8, #c084fc);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 0.2rem;
+    }
+    .sub-title {
+        color: #94a3b8;
+        font-size: 1rem;
+        margin-bottom: 1.5rem;
+    }
+
+    /* Cards */
+    .meta-card {
+        background: rgba(30, 41, 59, 0.7);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 12px;
+        padding: 1.2rem;
+        margin-bottom: 1.2rem;
+        backdrop-filter: blur(8px);
+    }
+    
+    .badge {
+        display: inline-block;
+        padding: 0.25rem 0.6rem;
+        border-radius: 9999px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        background: #1e293b;
+        color: #38bdf8;
+        border: 1px solid #0284c7;
+        margin-right: 0.4rem;
+    }
+
+    /* Download Action Buttons */
+    .download-pill {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        background: #0f172a;
+        border: 1px solid #334155;
+        border-radius: 10px;
+        padding: 0.75rem 1rem;
+        margin-bottom: 0.6rem;
+        transition: all 0.2s ease;
+    }
+    .download-pill:hover {
+        border-color: #38bdf8;
+        background: #1e293b;
+    }
+    .download-link {
+        background: #2563eb;
+        color: #ffffff !important;
+        text-decoration: none;
+        padding: 0.4rem 0.9rem;
+        border-radius: 6px;
+        font-size: 0.85rem;
+        font-weight: 600;
+        transition: background 0.2s ease;
+    }
+    .download-link:hover {
+        background: #1d4ed8;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Header Section
+st.markdown('<div class="main-title">⚡ MediaFlow AI</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-title">Next-gen media stream extractor, cross-lingual localization, & voiceover director engine</div>', unsafe_allow_html=True)
 
 # Groq API Key Setup
 groq_api_key = st.secrets.get("GROQ_API_KEY", os.getenv("GROQ_API_KEY"))
 
-# Video URL input
-url = st.text_input("Enter Video URL:", placeholder="https://www.youtube.com/watch?v=...")
-
-col1, col2 = st.columns(2)
-with col1:
+# Sidebar Controls
+with st.sidebar:
+    st.markdown("### ⚙️ Engine Settings")
     selected_country = st.selectbox(
-        "Target Region:",
+        "Geo-Bypass Routing:",
         ["US", "GB", "DE", "JP", "FR", "IN"],
-        index=0
+        index=0,
+        help="Select proxy origin to resolve region-locked media streams."
     )
-with col2:
-    enable_transcription = st.checkbox("Generate AI Transcript & Summary", value=True)
+    target_language = st.selectbox(
+        "Target Localization Language:",
+        ["Hindi", "English", "Spanish", "French", "German", "Japanese", "Arabic", "Russian"],
+        index=0,
+        help="Target language for executive summary, key quotes, and voiceover guides."
+    )
+    enable_ai_suite = st.toggle("Enable AI Intelligence Pipeline", value=True)
+    
+    st.divider()
+    st.markdown("#### 💡 Pro Tips")
+    st.caption("• **Zero Cloud Egress:** Video bytes never hit the server, completely eliminating 403 Forbidden bans.")
+    st.caption("• **Dynamic Model Fallback:** AI automatically binds to currently available Groq LPU models.")
 
 # Helper function to extract YouTube Video ID
 def get_youtube_id(video_url):
@@ -46,75 +136,69 @@ def get_youtube_id(video_url):
             return match.group(1)
     return None
 
-# Helper to fetch transcript safely without byte downloads
+# Safe Transcript Ingestion
 def fetch_safe_transcript(video_id):
     try:
         transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-        
-        # 1. Try manual transcript (English or Hindi)
         try:
             transcript = transcript_list.find_manually_created_transcript(['en', 'en-US', 'hi', 'hi-Latn'])
             return " ".join([item['text'] for item in transcript.fetch()])
         except Exception:
             pass
 
-        # 2. Try generated transcript (English or Hindi)
         try:
             transcript = transcript_list.find_generated_transcript(['en', 'en-US', 'hi', 'hi-Latn'])
             return " ".join([item['text'] for item in transcript.fetch()])
         except Exception:
             pass
 
-        # 3. Fallback: Take first available transcript and translate to English
         for t in transcript_list:
             try:
-                translated = t.translate('en')
-                return " ".join([item['text'] for item in translated.fetch()])
-            except Exception:
                 return " ".join([item['text'] for item in t.fetch()])
-
+            except Exception:
+                pass
     except (TranscriptsDisabled, NoTranscriptFound):
         return None
     except Exception:
         return None
 
-# Helper function to get an active, working text model dynamically from Groq
+# Dynamic Groq Model Detection
 def get_working_groq_model(client):
     try:
         models_data = client.models.list()
         available_ids = [m.id for m in models_data.data if hasattr(m, 'id')]
-        
-        # Priority list of known chat models
-        preferred_models = [
+        preferred = [
             "llama-3.3-70b-versatile",
             "llama-3.1-70b-versatile",
             "llama-3.1-8b-instant",
-            "mixtral-8x7b-32768",
-            "gemma2-9b-it"
+            "mixtral-8x7b-32768"
         ]
-        
-        for pref in preferred_models:
-            if pref in available_ids:
-                return pref
-                
-        # If none of the preferred match, pick any non-whisper model
+        for p in preferred:
+            if p in available_ids:
+                return p
         for m_id in available_ids:
             if "whisper" not in m_id.lower() and "guard" not in m_id.lower():
                 return m_id
-                
         return "llama-3.1-8b-instant"
     except Exception:
         return "llama-3.1-8b-instant"
 
-# Main Processing Execution
-if st.button("Process & Generate Content", type="primary"):
-    url_clean = url.strip()
+# Input Bar Section
+col_in, col_btn = st.columns([4, 1])
+with col_in:
+    url = st.text_input("Enter Media URL", placeholder="https://www.youtube.com/watch?v=...", label_visibility="collapsed")
+with col_btn:
+    process_btn = st.button("🚀 Analyze & Extract", type="primary", use_container_width=True)
 
+# Processing Logic
+if process_btn:
+    url_clean = url.strip()
     if not url_clean or not (url_clean.startswith("http://") or url_clean.startswith("https://")):
         st.error("Please enter a valid video link starting with http:// or https://")
     else:
-        with st.spinner("Extracting media streams and info..."):
+        with st.status("Analyzing media and spinning up AI pipeline...", expanded=True) as status:
             try:
+                st.write("Fetching metadata and building CDN routes...")
                 ydl_opts = {
                     'quiet': True,
                     'no_warnings': True,
@@ -122,9 +206,7 @@ if st.button("Process & Generate Content", type="primary"):
                     'geo_bypass': True,
                     'geo_bypass_country': selected_country,
                     'extractor_args': {
-                        'youtube': {
-                            'player_client': ['ios', 'android', 'web']
-                        }
+                        'youtube': {'player_client': ['ios', 'android', 'web']}
                     }
                 }
 
@@ -133,86 +215,111 @@ if st.button("Process & Generate Content", type="primary"):
                     title = info.get('title', 'Media_Content')
                     thumbnail = info.get('thumbnail')
                     duration = info.get('duration_string', 'N/A')
+                    views = info.get('view_count', 0)
+                    author = info.get('uploader', 'Unknown Creator')
                     description = info.get('description', '')
                     formats = info.get('formats', [])
 
-                    st.success(f"✅ Successfully Found: **{title}**")
+                st.write("Resolving subtitles and audio dialogue tracks...")
+                video_id = get_youtube_id(url_clean)
+                transcription_text = fetch_safe_transcript(video_id) if video_id else None
+                source_content = transcription_text or (description[:3000] if description else None)
 
-                    c1, c2 = st.columns([1, 2])
-                    with c1:
-                        if thumbnail:
-                            st.image(thumbnail, use_container_width=True)
-                    with c2:
-                        st.write(f"⏱️ **Duration:** {duration}")
-                        st.write(f"👁️ **Views:** {info.get('view_count', 'N/A'):,}")
+                # AI Processing
+                summary_output = ""
+                dubbing_output = ""
+                active_model = "llama-3.1-8b-instant"
 
-                    # AI Transcription & Summary Pipeline
-                    if enable_transcription:
-                        if not groq_api_key:
-                            st.warning("⚠️ Groq API key is missing. Add GROQ_API_KEY to Streamlit Secrets.")
-                        else:
-                            st.divider()
-                            st.subheader("🤖 Groq AI Content Intelligence")
+                if enable_ai_suite and groq_api_key and source_content:
+                    st.write("Running Groq LPU reasoning and localization...")
+                    client = Groq(api_key=groq_api_key)
+                    active_model = get_working_groq_model(client)
 
-                            client = Groq(api_key=groq_api_key)
-                            video_id = get_youtube_id(url_clean)
-                            transcription_text = None
+                    # 1. Summary Prompt
+                    trans_prompt = f"""
+You are an expert multilingual translator and localization specialist.
+Translate the key concepts and provide an executive summary strictly in {target_language}.
+Format clearly with:
+- **Executive Overview (3-4 concise points)**
+- **Key Dialogues / Quotes translated into {target_language}**
 
-                            if video_id:
-                                with st.spinner("Extracting transcript data (Cloud-safe)..."):
-                                    transcription_text = fetch_safe_transcript(video_id)
+Content:
+{source_content[:4000]}
+"""
+                    t_resp = client.chat.completions.create(
+                        model=active_model,
+                        messages=[{"role": "user", "content": trans_prompt}],
+                        max_tokens=450
+                    )
+                    summary_output = t_resp.choices[0].message.content.strip()
 
-                            context_source = "Transcript"
-                            content_to_summarize = transcription_text
+                    # 2. Dubbing Persona Prompt
+                    dub_prompt = f"""
+You are a professional audio dubbing director. Analyze this video content and provide actionable guidelines for localizing this video into {target_language}:
+1. **Target Voice Persona:** (Recommended vocal tone, age profile, confidence level)
+2. **Pacing & Lip-Sync Rhythm:** (Estimated speaking speed, pauses, and cadence matching)
+3. **Emotional Cadence:** (Humorous, Urgent, Instructional, Dramatic)
+4. **Cultural Nuances:** (Important idioms or context adjustments for {target_language} listeners)
 
-                            if not content_to_summarize and description:
-                                content_to_summarize = description[:3000]
-                                context_source = "Video Overview & Description"
-                                st.info("ℹ️ Captions were not present for this video; generating summary from official video details.")
+Context:
+{source_content[:3500]}
+"""
+                    d_resp = client.chat.completions.create(
+                        model=active_model,
+                        messages=[{"role": "user", "content": dub_prompt}],
+                        max_tokens=400
+                    )
+                    dubbing_output = d_resp.choices[0].message.content.strip()
 
-                            if content_to_summarize:
-                                if transcription_text:
-                                    with st.expander("📄 View Full Video Transcript"):
-                                        st.write(transcription_text)
+                status.update(label="Processing Complete!", state="complete", expanded=False)
 
-                                with st.spinner("Selecting active Groq model and generating summary..."):
-                                    try:
-                                        active_model = get_working_groq_model(client)
-                                        
-                                        summary_completion = client.chat.completions.create(
-                                            model=active_model,
-                                            messages=[
-                                                {
-                                                    "role": "system",
-                                                    "content": (
-                                                        "You are an expert executive content analyst. "
-                                                        "Provide a clear, high-impact bulleted summary of the core concepts, "
-                                                        "key arguments, and action steps from the provided text."
-                                                    )
-                                                },
-                                                {
-                                                    "role": "user",
-                                                    "content": f"Analyze this {context_source}:\n\n{content_to_summarize[:4500]}"
-                                                }
-                                            ],
-                                            max_tokens=350
-                                        )
+                # Video Meta Showcase
+                st.markdown(f"""
+                <div class="meta-card">
+                    <div style="display: flex; gap: 1.5rem; align-items: center; flex-wrap: wrap;">
+                        <img src="{thumbnail}" style="width: 220px; border-radius: 8px; object-fit: cover; aspect-ratio: 16/9;" />
+                        <div style="flex: 1; min-width: 250px;">
+                            <h3 style="margin: 0 0 0.5rem 0; font-size: 1.25rem;">{title}</h3>
+                            <div style="margin-bottom: 0.6rem;">
+                                <span class="badge">👤 {author}</span>
+                                <span class="badge">⏱️ {duration}</span>
+                                <span class="badge">👁️ {views:,} views</span>
+                                <span class="badge">🤖 Model: {active_model}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
 
-                                        summary_res = summary_completion.choices[0].message.content.strip()
+                # Tabbed Output Interface
+                tab_summary, tab_dubbing, tab_downloads, tab_transcript = st.tabs([
+                    f"📝 Summary ({target_language})",
+                    "🎙️ Dubbing Director Guide",
+                    "📥 Direct Media Streams",
+                    "📄 Full Transcript"
+                ])
 
-                                        st.markdown(f"#### 📌 Key Takeaways & Actionable Summary `({active_model})`")
-                                        st.markdown(summary_res)
+                with tab_summary:
+                    if summary_output:
+                        st.markdown(summary_output)
+                        st.download_button(
+                            label="💾 Export Summary as .txt",
+                            data=summary_output,
+                            file_name=f"summary_{target_language.lower()}.txt",
+                            mime="text/plain"
+                        )
+                    else:
+                        st.info("No summary available. Ensure captions are available or add a valid Groq API key.")
 
-                                    except Exception as sum_err:
-                                        st.error(f"Summary Error: {str(sum_err)}")
-                            else:
-                                st.warning("⚠️ No captions or descriptions found to generate summary.")
+                with tab_dubbing:
+                    if dubbing_output:
+                        st.markdown(dubbing_output)
+                    else:
+                        st.info("Dubbing guidelines could not be generated for this media.")
 
-                    # Direct Download Streams
-                    st.divider()
-                    st.subheader("📥 Direct Download Streams")
-                    st.caption("💡 Right-click any stream link and select 'Save Link As...' to download directly onto your device.")
-
+                with tab_downloads:
+                    st.caption("Direct CDN streams routed client-side. Right-click any button and select 'Save Link As...' if preferred.")
+                    
                     combined_streams = [
                         f for f in formats 
                         if f.get('ext') == 'mp4' 
@@ -220,7 +327,7 @@ if st.button("Process & Generate Content", type="primary"):
                         and f.get('acodec') and f.get('acodec') != 'none' 
                         and f.get('url')
                     ]
-
+                    
                     audio_streams = [
                         f for f in formats 
                         if f.get('vcodec') == 'none' 
@@ -228,20 +335,51 @@ if st.button("Process & Generate Content", type="primary"):
                         and f.get('url')
                     ]
 
-                    if combined_streams:
-                        st.markdown("#### 🎥 Video Streams (MP4)")
-                        for f in reversed(combined_streams):
-                            res = f.get('resolution') or f"{f.get('height', 'Unknown')}p"
-                            filesize = f.get('filesize')
-                            size_str = f" (~{round(filesize / (1024 * 1024), 1)} MB)" if filesize else ""
-                            stream_url = f.get('url')
-                            st.markdown(f"- **{res}**{size_str} ➔ [Open / Download Video]({stream_url})")
+                    col_v, col_a = st.columns(2)
+                    with col_v:
+                        st.markdown("##### 🎥 Video (MP4 Combined)")
+                        if combined_streams:
+                            for f in reversed(combined_streams):
+                                res = f.get('resolution') or f"{f.get('height', 'Unknown')}p"
+                                filesize = f.get('filesize')
+                                size_str = f"{round(filesize / (1024 * 1024), 1)} MB" if filesize else "Direct CDN"
+                                st.markdown(f"""
+                                <div class="download-pill">
+                                    <span><b>{res}</b> ({size_str})</span>
+                                    <a class="download-link" href="{f.get('url')}" target="_blank">Download MP4</a>
+                                </div>
+                                """, unsafe_allow_html=True)
+                        else:
+                            st.write("No combined video stream found.")
 
-                    if audio_streams:
-                        st.markdown("#### 🎵 Audio Streams (Direct Track)")
-                        best_audio = audio_streams[-1]
-                        abr = best_audio.get('abr', '128')
-                        st.markdown(f"- **Audio ({abr} kbps)** ➔ [Open / Download Audio]({best_audio.get('url')})")
+                    with col_a:
+                        st.markdown("##### 🎵 Audio Track (MP3/M4A)")
+                        if audio_streams:
+                            best_audio = audio_streams[-1]
+                            abr = best_audio.get('abr', '128')
+                            filesize = best_audio.get('filesize')
+                            size_str = f"{round(filesize / (1024 * 1024), 1)} MB" if filesize else "High Quality"
+                            st.markdown(f"""
+                            <div class="download-pill">
+                                <span><b>Audio Stream</b> (~{abr} kbps, {size_str})</span>
+                                <a class="download-link" href="{best_audio.get('url')}" target="_blank">Download Audio</a>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        else:
+                            st.write("No audio stream found.")
+
+                with tab_transcript:
+                    if transcription_text:
+                        st.text_area("Original Captions", transcription_text, height=350)
+                        st.download_button(
+                            label="💾 Export Raw Transcript",
+                            data=transcription_text,
+                            file_name="transcript.txt",
+                            mime="text/plain"
+                        )
+                    else:
+                        st.info("Direct captions were not published for this video.")
 
             except Exception as e:
+                status.update(label="Error Occurred", state="error", expanded=True)
                 st.error(f"Processing Error: {str(e)}")
