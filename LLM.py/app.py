@@ -1,385 +1,147 @@
 import os
+import glob
 import re
 import streamlit as st
 import yt_dlp
-from groq import Groq
 from dotenv import load_dotenv
-from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
 
-# Load local environment variables
 load_dotenv()
 
-# Page Setup
+# Page Configuration
 st.set_page_config(
-    page_title="MediaFlow AI | Video Intelligence & Dubbing Suite",
-    page_icon="⚡",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    page_title="Universal Video Downloader AI",
+    page_icon="🎬",
+    layout="centered"
 )
 
-# Custom SaaS-style CSS
-st.markdown("""
-<style>
-    /* Global Styles */
-    .block-container {
-        padding-top: 2rem;
-        padding-bottom: 3rem;
-        max-width: 1100px;
-    }
-    
-    /* Modern Header */
-    .main-title {
-        font-size: 2.3rem;
-        font-weight: 800;
-        background: linear-gradient(90deg, #38bdf8, #818cf8, #c084fc);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        margin-bottom: 0.2rem;
-    }
-    .sub-title {
-        color: #94a3b8;
-        font-size: 1rem;
-        margin-bottom: 1.5rem;
-    }
+# App Header
+st.title("🎬 Universal Video Downloader AI")
+st.caption("Download YouTube & Instagram videos with full audio.")
 
-    /* Cards */
-    .meta-card {
-        background: rgba(30, 41, 59, 0.7);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 12px;
-        padding: 1.2rem;
-        margin-bottom: 1.2rem;
-        backdrop-filter: blur(8px);
-    }
-    
-    .badge {
-        display: inline-block;
-        padding: 0.25rem 0.6rem;
-        border-radius: 9999px;
-        font-size: 0.75rem;
-        font-weight: 600;
-        background: #1e293b;
-        color: #38bdf8;
-        border: 1px solid #0284c7;
-        margin-right: 0.4rem;
-    }
+DOWNLOAD_DIR = "downloads"
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-    /* Download Action Buttons */
-    .download-pill {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        background: #0f172a;
-        border: 1px solid #334155;
-        border-radius: 10px;
-        padding: 0.75rem 1rem;
-        margin-bottom: 0.6rem;
-        transition: all 0.2s ease;
-    }
-    .download-pill:hover {
-        border-color: #38bdf8;
-        background: #1e293b;
-    }
-    .download-link {
-        background: #2563eb;
-        color: #ffffff !important;
-        text-decoration: none;
-        padding: 0.4rem 0.9rem;
-        border-radius: 6px;
-        font-size: 0.85rem;
-        font-weight: 600;
-        transition: background 0.2s ease;
-    }
-    .download-link:hover {
-        background: #1d4ed8;
-    }
-</style>
-""", unsafe_allow_html=True)
+def sanitize_filename(name: str) -> str:
+    """Removes invalid filesystem characters from media titles."""
+    return re.sub(r'[\\/*?:"<>|]', "", name).strip()
 
-# Header Section
-st.markdown('<div class="main-title">⚡ MediaFlow AI</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-title">Next-gen media stream extractor, cross-lingual localization, & voiceover director engine</div>', unsafe_allow_html=True)
+def run_downloader(url: str, quality_choice: str):
+    is_instagram = "instagram.com" in url.lower()
 
-# Groq API Key Setup
-groq_api_key = st.secrets.get("GROQ_API_KEY", os.getenv("GROQ_API_KEY"))
-
-# Sidebar Controls
-with st.sidebar:
-    st.markdown("### ⚙️ Engine Settings")
-    selected_country = st.selectbox(
-        "Geo-Bypass Routing:",
-        ["US", "GB", "DE", "JP", "FR", "IN"],
-        index=0,
-        help="Select proxy origin to resolve region-locked media streams."
-    )
-    target_language = st.selectbox(
-        "Target Localization Language:",
-        ["Hindi", "English", "Spanish", "French", "German", "Japanese", "Arabic", "Russian"],
-        index=0,
-        help="Target language for executive summary, key quotes, and voiceover guides."
-    )
-    enable_ai_suite = st.toggle("Enable AI Intelligence Pipeline", value=True)
-    
-    st.divider()
-    st.markdown("#### 💡 Pro Tips")
-    st.caption("• **Zero Cloud Egress:** Video bytes never hit the server, completely eliminating 403 Forbidden bans.")
-    st.caption("• **Dynamic Model Fallback:** AI automatically binds to currently available Groq LPU models.")
-
-# Helper function to extract YouTube Video ID
-def get_youtube_id(video_url):
-    patterns = [
-        r"(?:v=|\/|youtu\.be\/|embed\/|shorts\/)([0-9A-Za-z_-]{11})"
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, video_url)
-        if match:
-            return match.group(1)
-    return None
-
-# Safe Transcript Ingestion
-def fetch_safe_transcript(video_id):
-    try:
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-        try:
-            transcript = transcript_list.find_manually_created_transcript(['en', 'en-US', 'hi', 'hi-Latn'])
-            return " ".join([item['text'] for item in transcript.fetch()])
-        except Exception:
-            pass
-
-        try:
-            transcript = transcript_list.find_generated_transcript(['en', 'en-US', 'hi', 'hi-Latn'])
-            return " ".join([item['text'] for item in transcript.fetch()])
-        except Exception:
-            pass
-
-        for t in transcript_list:
-            try:
-                return " ".join([item['text'] for item in t.fetch()])
-            except Exception:
-                pass
-    except (TranscriptsDisabled, NoTranscriptFound):
-        return None
-    except Exception:
-        return None
-
-# Dynamic Groq Model Detection
-def get_working_groq_model(client):
-    try:
-        models_data = client.models.list()
-        available_ids = [m.id for m in models_data.data if hasattr(m, 'id')]
-        preferred = [
-            "llama-3.3-70b-versatile",
-            "llama-3.1-70b-versatile",
-            "llama-3.1-8b-instant",
-            "mixtral-8x7b-32768"
-        ]
-        for p in preferred:
-            if p in available_ids:
-                return p
-        for m_id in available_ids:
-            if "whisper" not in m_id.lower() and "guard" not in m_id.lower():
-                return m_id
-        return "llama-3.1-8b-instant"
-    except Exception:
-        return "llama-3.1-8b-instant"
-
-# Input Bar Section
-col_in, col_btn = st.columns([4, 1])
-with col_in:
-    url = st.text_input("Enter Media URL", placeholder="https://www.youtube.com/watch?v=...", label_visibility="collapsed")
-with col_btn:
-    process_btn = st.button("🚀 Analyze & Extract", type="primary", use_container_width=True)
-
-# Processing Logic
-if process_btn:
-    url_clean = url.strip()
-    if not url_clean or not (url_clean.startswith("http://") or url_clean.startswith("https://")):
-        st.error("Please enter a valid video link starting with http:// or https://")
+    # Instagram uses a single combined stream; YouTube uses split streams
+    if is_instagram:
+        format_rule = "best"
     else:
-        with st.status("Analyzing media and spinning up AI pipeline...", expanded=True) as status:
+        if quality_choice == "Best Available (Highest / 1080p / 4K)":
+            format_rule = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
+        elif quality_choice == "720p (High Definition)":
+            format_rule = "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]"
+        elif quality_choice == "480p (Standard Definition)":
+            format_rule = "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best[height<=480]"
+        elif quality_choice == "Audio Only (MP3)":
+            format_rule = "bestaudio/best"
+        else:
+            format_rule = "bestvideo+bestaudio/best"
+
+    ydl_opts = {
+        'format': format_rule,
+        'outtmpl': f'{DOWNLOAD_DIR}/%(id)s.%(ext)s',
+        'merge_output_format': 'mp4',
+        'restrictfilenames': True,
+        'quiet': True,
+        'no_warnings': True,
+        # Real browser headers to bypass Instagram blocking
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9',
+        }
+    }
+
+    if quality_choice == "Audio Only (MP3)" and not is_instagram:
+        ydl_opts['postprocessors'] = [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }]
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        video_id = info.get('id')
+        title = info.get('title', 'instagram_video' if is_instagram else 'video')
+        clean_title = sanitize_filename(title)
+
+        # Expected extension
+        expected_ext = "mp3" if quality_choice == "Audio Only (MP3)" and not is_instagram else "mp4"
+
+        # Check exact matched file
+        specific_file = os.path.join(DOWNLOAD_DIR, f"{video_id}.{expected_ext}")
+        if os.path.exists(specific_file):
+            return specific_file, clean_title, expected_ext
+
+        # Fallback: scan by video_id
+        matches = glob.glob(f"{DOWNLOAD_DIR}/{video_id}.*")
+        valid_files = [f for f in matches if not f.endswith(('.part', '.ytdl'))]
+        if valid_files:
+            actual_file = valid_files[0]
+            ext = actual_file.rsplit('.', 1)[-1].lower()
+            return actual_file, clean_title, ext
+
+        # Fallback 2: pick latest created file
+        all_files = glob.glob(f"{DOWNLOAD_DIR}/*")
+        valid_all = [f for f in all_files if not f.endswith(('.part', '.ytdl', '.txt'))]
+        if valid_all:
+            latest_file = max(valid_all, key=os.path.getctime)
+            ext = latest_file.rsplit('.', 1)[-1].lower()
+            return latest_file, clean_title, ext
+
+        raise FileNotFoundError("Video file could not be saved to disk.")
+
+# --- UI Layout ---
+url_input = st.text_input(
+    "Paste Media Link:", 
+    placeholder="https://www.instagram.com/reel/... or https://www.youtube.com/watch?v=..."
+)
+
+quality_option = st.selectbox(
+    "Select Preferred Quality:",
+    [
+        "Best Available (Highest / 1080p / 4K)",
+        "720p (High Definition)",
+        "480p (Standard Definition)",
+        "Audio Only (MP3)"
+    ]
+)
+
+if st.button("Fetch & Download", type="primary"):
+    if not url_input.strip():
+        st.warning("Please paste a valid link first.")
+    else:
+        with st.spinner("Processing link and downloading media... Please wait..."):
             try:
-                st.write("Fetching metadata and building CDN routes...")
-                ydl_opts = {
-                    'quiet': True,
-                    'no_warnings': True,
-                    'noplaylist': True,
-                    'geo_bypass': True,
-                    'geo_bypass_country': selected_country,
-                    'extractor_args': {
-                        'youtube': {'player_client': ['ios', 'android', 'web']}
-                    }
-                }
+                file_path, title, ext = run_downloader(url_input.strip(), quality_option)
 
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(url_clean, download=False)
-                    title = info.get('title', 'Media_Content')
-                    thumbnail = info.get('thumbnail')
-                    duration = info.get('duration_string', 'N/A')
-                    views = info.get('view_count', 0)
-                    author = info.get('uploader', 'Unknown Creator')
-                    description = info.get('description', '')
-                    formats = info.get('formats', [])
+                if os.path.exists(file_path):
+                    st.success(f"Ready: **{title}**")
 
-                st.write("Resolving subtitles and audio dialogue tracks...")
-                video_id = get_youtube_id(url_clean)
-                transcription_text = fetch_safe_transcript(video_id) if video_id else None
-                source_content = transcription_text or (description[:3000] if description else None)
+                    if ext == "mp3":
+                        st.audio(file_path)
+                        mime_type = "audio/mp3"
+                    else:
+                        st.video(file_path)
+                        mime_type = f"video/{ext}"
 
-                # AI Processing
-                summary_output = ""
-                dubbing_output = ""
-                active_model = "llama-3.1-8b-instant"
-
-                if enable_ai_suite and groq_api_key and source_content:
-                    st.write("Running Groq LPU reasoning and localization...")
-                    client = Groq(api_key=groq_api_key)
-                    active_model = get_working_groq_model(client)
-
-                    # 1. Summary Prompt
-                    trans_prompt = f"""
-You are an expert multilingual translator and localization specialist.
-Translate the key concepts and provide an executive summary strictly in {target_language}.
-Format clearly with:
-- **Executive Overview (3-4 concise points)**
-- **Key Dialogues / Quotes translated into {target_language}**
-
-Content:
-{source_content[:4000]}
-"""
-                    t_resp = client.chat.completions.create(
-                        model=active_model,
-                        messages=[{"role": "user", "content": trans_prompt}],
-                        max_tokens=450
-                    )
-                    summary_output = t_resp.choices[0].message.content.strip()
-
-                    # 2. Dubbing Persona Prompt
-                    dub_prompt = f"""
-You are a professional audio dubbing director. Analyze this video content and provide actionable guidelines for localizing this video into {target_language}:
-1. **Target Voice Persona:** (Recommended vocal tone, age profile, confidence level)
-2. **Pacing & Lip-Sync Rhythm:** (Estimated speaking speed, pauses, and cadence matching)
-3. **Emotional Cadence:** (Humorous, Urgent, Instructional, Dramatic)
-4. **Cultural Nuances:** (Important idioms or context adjustments for {target_language} listeners)
-
-Context:
-{source_content[:3500]}
-"""
-                    d_resp = client.chat.completions.create(
-                        model=active_model,
-                        messages=[{"role": "user", "content": dub_prompt}],
-                        max_tokens=400
-                    )
-                    dubbing_output = d_resp.choices[0].message.content.strip()
-
-                status.update(label="Processing Complete!", state="complete", expanded=False)
-
-                # Video Meta Showcase
-                st.markdown(f"""
-                <div class="meta-card">
-                    <div style="display: flex; gap: 1.5rem; align-items: center; flex-wrap: wrap;">
-                        <img src="{thumbnail}" style="width: 220px; border-radius: 8px; object-fit: cover; aspect-ratio: 16/9;" />
-                        <div style="flex: 1; min-width: 250px;">
-                            <h3 style="margin: 0 0 0.5rem 0; font-size: 1.25rem;">{title}</h3>
-                            <div style="margin-bottom: 0.6rem;">
-                                <span class="badge">👤 {author}</span>
-                                <span class="badge">⏱️ {duration}</span>
-                                <span class="badge">👁️ {views:,} views</span>
-                                <span class="badge">🤖 Model: {active_model}</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-                # Tabbed Output Interface
-                tab_summary, tab_dubbing, tab_downloads, tab_transcript = st.tabs([
-                    f"📝 Summary ({target_language})",
-                    "🎙️ Dubbing Director Guide",
-                    "📥 Direct Media Streams",
-                    "📄 Full Transcript"
-                ])
-
-                with tab_summary:
-                    if summary_output:
-                        st.markdown(summary_output)
+                    with open(file_path, "rb") as f:
                         st.download_button(
-                            label="💾 Export Summary as .txt",
-                            data=summary_output,
-                            file_name=f"summary_{target_language.lower()}.txt",
-                            mime="text/plain"
+                            label=f"💾 Save {ext.upper()} to Device",
+                            data=f.read(),
+                            file_name=f"{title[:40]}.{ext}",
+                            mime=mime_type
                         )
-                    else:
-                        st.info("No summary available. Ensure captions are available or add a valid Groq API key.")
-
-                with tab_dubbing:
-                    if dubbing_output:
-                        st.markdown(dubbing_output)
-                    else:
-                        st.info("Dubbing guidelines could not be generated for this media.")
-
-                with tab_downloads:
-                    st.caption("Direct CDN streams routed client-side. Right-click any button and select 'Save Link As...' if preferred.")
-                    
-                    combined_streams = [
-                        f for f in formats 
-                        if f.get('ext') == 'mp4' 
-                        and f.get('vcodec') and f.get('vcodec') != 'none' 
-                        and f.get('acodec') and f.get('acodec') != 'none' 
-                        and f.get('url')
-                    ]
-                    
-                    audio_streams = [
-                        f for f in formats 
-                        if f.get('vcodec') == 'none' 
-                        and f.get('acodec') and f.get('acodec') != 'none' 
-                        and f.get('url')
-                    ]
-
-                    col_v, col_a = st.columns(2)
-                    with col_v:
-                        st.markdown("##### 🎥 Video (MP4 Combined)")
-                        if combined_streams:
-                            for f in reversed(combined_streams):
-                                res = f.get('resolution') or f"{f.get('height', 'Unknown')}p"
-                                filesize = f.get('filesize')
-                                size_str = f"{round(filesize / (1024 * 1024), 1)} MB" if filesize else "Direct CDN"
-                                st.markdown(f"""
-                                <div class="download-pill">
-                                    <span><b>{res}</b> ({size_str})</span>
-                                    <a class="download-link" href="{f.get('url')}" target="_blank">Download MP4</a>
-                                </div>
-                                """, unsafe_allow_html=True)
-                        else:
-                            st.write("No combined video stream found.")
-
-                    with col_a:
-                        st.markdown("##### 🎵 Audio Track (MP3/M4A)")
-                        if audio_streams:
-                            best_audio = audio_streams[-1]
-                            abr = best_audio.get('abr', '128')
-                            filesize = best_audio.get('filesize')
-                            size_str = f"{round(filesize / (1024 * 1024), 1)} MB" if filesize else "High Quality"
-                            st.markdown(f"""
-                            <div class="download-pill">
-                                <span><b>Audio Stream</b> (~{abr} kbps, {size_str})</span>
-                                <a class="download-link" href="{best_audio.get('url')}" target="_blank">Download Audio</a>
-                            </div>
-                            """, unsafe_allow_html=True)
-                        else:
-                            st.write("No audio stream found.")
-
-                with tab_transcript:
-                    if transcription_text:
-                        st.text_area("Original Captions", transcription_text, height=350)
-                        st.download_button(
-                            label="💾 Export Raw Transcript",
-                            data=transcription_text,
-                            file_name="transcript.txt",
-                            mime="text/plain"
-                        )
-                    else:
-                        st.info("Direct captions were not published for this video.")
-
+                else:
+                    st.error("Error: Media file could not be located.")
             except Exception as e:
-                status.update(label="Error Occurred", state="error", expanded=True)
-                st.error(f"Processing Error: {str(e)}")
+                error_msg = str(e)
+                if "login" in error_msg.lower():
+                    st.error("Instagram Login Required: This account is private or Instagram blocked guest access for this reel.")
+                else:
+                    st.error(f"Download Failed: {error_msg}")
