@@ -190,7 +190,6 @@ def run_downloader(url: str, quality_choice: str):
     if is_instagram:
         ydl_opts['format'] = 'best'
     elif is_youtube:
-        # iOS and Android clients bypass error 152 (embedding disabled) and bot block
         ydl_opts['extractor_args'] = {
             'youtube': {
                 'player_client': ['ios', 'android', 'mweb'],
@@ -198,8 +197,9 @@ def run_downloader(url: str, quality_choice: str):
             }
         }
 
+        # Resilient format selection without container locking
         if quality_choice == "Best Available (Up to 4K / 1080p)":
-            ydl_opts['format'] = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best[ext=mp4]/best'
+            ydl_opts['format'] = 'bestvideo+bestaudio/best'
         elif quality_choice == "High Definition (720p)":
             ydl_opts['format'] = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best'
         elif quality_choice == "Standard Definition (480p)":
@@ -222,10 +222,12 @@ def run_downloader(url: str, quality_choice: str):
 
         expected_ext = "mp3" if quality_choice == "Audio Only (MP3)" and is_youtube else "mp4"
 
+        # 1. Exact match
         specific_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.{expected_ext}")
         if os.path.exists(specific_path):
             return specific_path, clean_title, expected_ext
 
+        # 2. Wildcard match
         matches = glob.glob(f"{DOWNLOAD_DIR}/{video_id}.*")
         valid_files = [f for f in matches if not f.endswith(('.part', '.ytdl'))]
         if valid_files:
@@ -233,6 +235,7 @@ def run_downloader(url: str, quality_choice: str):
             ext = target.rsplit('.', 1)[-1].lower()
             return target, clean_title, ext
 
+        # 3. Fallback to newest file
         all_files = glob.glob(f"{DOWNLOAD_DIR}/*")
         valid_all = [f for f in all_files if not f.endswith(('.part', '.ytdl', '.txt'))]
         if valid_all:
@@ -298,5 +301,7 @@ if process_btn:
                     st.error("Rate Limit Detected (HTTP 403): Try another video link or check Streamlit Secrets cookies.")
                 elif "152" in err or "unavailable" in err.lower():
                     st.error("Playback Restricted: This video blocks playback on external platforms or is age-restricted.")
+                elif "format is not available" in err.lower():
+                    st.error("Format Error: The requested quality stream is unavailable for this specific video. Try a different quality preset.")
                 else:
                     st.error(f"Execution Error: {err}")
