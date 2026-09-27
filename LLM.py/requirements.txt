@@ -1,5 +1,3 @@
 streamlit
-yt-dlp>=2024.08.06
-groq
+yt-dlp>=2025.01.01
 python-dotenv
-youtube-transcript-api
