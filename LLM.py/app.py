@@ -116,7 +116,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Application Header
+# App Header
 st.title("⚡ OmniStream Downloader")
 st.markdown("<div class='sub-heading'>High-performance media extraction engine for YouTube & Instagram.</div>", unsafe_allow_html=True)
 
@@ -124,11 +124,11 @@ DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 def sanitize_filename(name: str) -> str:
-    """Removes invalid filesystem characters from media titles."""
+    """Removes invalid filesystem characters."""
     return re.sub(r'[\\/*?:"<>|]', "", name).strip()
 
 def get_secret_cookie_file():
-    """Retrieves Netscape cookies from Streamlit Cloud Secrets if configured."""
+    """Extracts Netscape formatted cookies from Streamlit Secrets if provided."""
     try:
         cookies_content = st.secrets.get("YOUTUBE_COOKIES", None)
         if cookies_content:
@@ -153,14 +153,14 @@ def run_downloader(url: str, quality_choice: str):
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
-        'http_chunk_size': 5242880,  # 5MB chunks to mitigate 403 throttling
+        'http_chunk_size': 10485760,  # 10MB chunking avoids 403 mid-stream drop
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
         }
     }
 
-    # Load cookies from secrets if present
+    # Attach cookies file if configured in Streamlit Secrets
     cookie_path = get_secret_cookie_file()
     if cookie_path:
         ydl_opts['cookiefile'] = cookie_path
@@ -168,10 +168,10 @@ def run_downloader(url: str, quality_choice: str):
     if is_instagram:
         ydl_opts['format'] = 'best'
     elif is_youtube:
-        # tv_embedded and ios client simulation bypasses 403 blocks on datacenter IPs
+        # Multi-client fallback chain to bypass 403 / bot detection
         ydl_opts['extractor_args'] = {
             'youtube': {
-                'player_client': ['tv_embedded', 'ios'],
+                'player_client': ['web_embedded', 'android_creator', 'ios'],
                 'player_skip': ['webpage', 'configs']
             }
         }
@@ -200,12 +200,12 @@ def run_downloader(url: str, quality_choice: str):
 
         expected_ext = "mp3" if quality_choice == "Audio Only (MP3)" and is_youtube else "mp4"
 
-        # 1. Look for direct ID match
+        # 1. Exact match by video ID and extension
         specific_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.{expected_ext}")
         if os.path.exists(specific_path):
             return specific_path, clean_title, expected_ext
 
-        # 2. Look for wildcard match by ID
+        # 2. Match by video ID prefix
         matches = glob.glob(f"{DOWNLOAD_DIR}/{video_id}.*")
         valid_files = [f for f in matches if not f.endswith(('.part', '.ytdl'))]
         if valid_files:
@@ -213,7 +213,7 @@ def run_downloader(url: str, quality_choice: str):
             ext = target.rsplit('.', 1)[-1].lower()
             return target, clean_title, ext
 
-        # 3. Fallback: select most recently created file in download directory
+        # 3. Fallback: most recently modified file in directory
         all_files = glob.glob(f"{DOWNLOAD_DIR}/*")
         valid_all = [f for f in all_files if not f.endswith(('.part', '.ytdl', '.txt'))]
         if valid_all:
@@ -221,7 +221,7 @@ def run_downloader(url: str, quality_choice: str):
             ext = latest.rsplit('.', 1)[-1].lower()
             return latest, clean_title, ext
 
-        raise FileNotFoundError("Processed output could not be located on disk.")
+        raise FileNotFoundError("Output media file could not be found.")
 
 # UI Form
 st.markdown("<div class='pro-card'>", unsafe_allow_html=True)
@@ -245,7 +245,7 @@ st.markdown("</div>", unsafe_allow_html=True)
 
 if process_btn:
     if not url_input.strip():
-        st.warning("Please provide a valid media link to proceed.")
+        st.warning("Please enter a valid video or reel URL.")
     else:
         with st.spinner("Processing media streams and preparing payload..."):
             try:
@@ -276,6 +276,6 @@ if process_btn:
                 if "login" in err.lower():
                     st.error("Access Restricted: Instagram authentication required for private media.")
                 elif "403" in err or "sign in to confirm" in err.lower():
-                    st.error("Rate Limit Detected: Server received HTTP 403. Try another link or retry after a brief delay.")
+                    st.error("Rate Limit Detected (HTTP 403): Add YOUTUBE_COOKIES in Streamlit Secrets, or try another video link.")
                 else:
                     st.error(f"Execution Error: {err}")
