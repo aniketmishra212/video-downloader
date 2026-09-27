@@ -1,13 +1,14 @@
 import os
 import glob
 import re
+import tempfile
 import streamlit as st
 import yt_dlp
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# Page Setup
+# Page Configuration
 st.set_page_config(
     page_title="OmniStream | Professional Media Downloader",
     page_icon="⚡",
@@ -28,7 +29,6 @@ st.markdown("""
         color: #f1f5f9;
     }
 
-    /* Clean Card Container */
     .pro-card {
         background: #111827;
         border: 1px solid #1f2937;
@@ -38,7 +38,6 @@ st.markdown("""
         box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
     }
 
-    /* Professional Headings */
     h1 {
         font-weight: 700 !important;
         font-size: 28px !important;
@@ -54,7 +53,6 @@ st.markdown("""
         margin-bottom: 24px;
     }
 
-    /* Input Fields */
     .stTextInput>div>div>input {
         background-color: #1e293b !important;
         color: #ffffff !important;
@@ -62,14 +60,12 @@ st.markdown("""
         border-radius: 8px !important;
         font-size: 14px !important;
         padding: 10px 14px !important;
-        transition: border-color 0.2s;
     }
     .stTextInput>div>div>input:focus {
         border-color: #3b82f6 !important;
         box-shadow: 0 0 0 1px #3b82f6 !important;
     }
 
-    /* Selectbox Dropdown */
     .stSelectbox>div>div {
         background-color: #1e293b !important;
         color: #ffffff !important;
@@ -78,7 +74,6 @@ st.markdown("""
         font-size: 14px !important;
     }
 
-    /* Primary Processing Button */
     .stButton>button {
         background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%) !important;
         color: #ffffff !important;
@@ -97,7 +92,6 @@ st.markdown("""
         transform: translateY(-1px);
     }
 
-    /* Download Deliverable Button */
     .stDownloadButton>button {
         background: #059669 !important;
         color: #ffffff !important;
@@ -130,14 +124,28 @@ DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 def sanitize_filename(name: str) -> str:
-    """Removes invalid filesystem characters."""
+    """Removes invalid filesystem characters from media titles."""
     return re.sub(r'[\\/*?:"<>|]', "", name).strip()
+
+def get_secret_cookie_file():
+    """Retrieves Netscape cookies from Streamlit Cloud Secrets if configured."""
+    try:
+        cookies_content = st.secrets.get("YOUTUBE_COOKIES", None)
+        if cookies_content:
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".txt")
+            temp_file.write(cookies_content.strip().encode("utf-8"))
+            temp_file.close()
+            return temp_file.name
+    except Exception:
+        pass
+    return None
 
 def run_downloader(url: str, quality_choice: str):
     url_lower = url.lower()
     is_instagram = "instagram.com" in url_lower
     is_youtube = "youtube.com" in url_lower or "youtu.be" in url_lower
 
+    # Base configuration
     ydl_opts = {
         'outtmpl': f'{DOWNLOAD_DIR}/%(id)s.%(ext)s',
         'merge_output_format': 'mp4',
@@ -145,20 +153,26 @@ def run_downloader(url: str, quality_choice: str):
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
-        'http_chunk_size': 10485760,  # 10MB chunking prevents mid-stream 403 throttling
+        'http_chunk_size': 5242880,  # 5MB chunks to mitigate 403 throttling
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
         }
     }
 
+    # Load cookies from secrets if present
+    cookie_path = get_secret_cookie_file()
+    if cookie_path:
+        ydl_opts['cookiefile'] = cookie_path
+
     if is_instagram:
         ydl_opts['format'] = 'best'
     elif is_youtube:
+        # tv_embedded and ios client simulation bypasses 403 blocks on datacenter IPs
         ydl_opts['extractor_args'] = {
             'youtube': {
-                'player_client': ['mweb', 'ios'],
-                'skip': ['dash', 'hls']
+                'player_client': ['tv_embedded', 'ios'],
+                'player_skip': ['webpage', 'configs']
             }
         }
 
@@ -186,11 +200,12 @@ def run_downloader(url: str, quality_choice: str):
 
         expected_ext = "mp3" if quality_choice == "Audio Only (MP3)" and is_youtube else "mp4"
 
-        # Check matched file
+        # 1. Look for direct ID match
         specific_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.{expected_ext}")
         if os.path.exists(specific_path):
             return specific_path, clean_title, expected_ext
 
+        # 2. Look for wildcard match by ID
         matches = glob.glob(f"{DOWNLOAD_DIR}/{video_id}.*")
         valid_files = [f for f in matches if not f.endswith(('.part', '.ytdl'))]
         if valid_files:
@@ -198,6 +213,7 @@ def run_downloader(url: str, quality_choice: str):
             ext = target.rsplit('.', 1)[-1].lower()
             return target, clean_title, ext
 
+        # 3. Fallback: select most recently created file in download directory
         all_files = glob.glob(f"{DOWNLOAD_DIR}/*")
         valid_all = [f for f in all_files if not f.endswith(('.part', '.ytdl', '.txt'))]
         if valid_all:
@@ -207,10 +223,10 @@ def run_downloader(url: str, quality_choice: str):
 
         raise FileNotFoundError("Processed output could not be located on disk.")
 
-# Input Panel
+# UI Form
 st.markdown("<div class='pro-card'>", unsafe_allow_html=True)
 url_input = st.text_input(
-    "Media Source URL", 
+    "Media Source URL",
     placeholder="https://www.youtube.com/watch?v=... or https://www.instagram.com/reel/..."
 )
 
@@ -260,6 +276,6 @@ if process_btn:
                 if "login" in err.lower():
                     st.error("Access Restricted: Instagram authentication required for private media.")
                 elif "403" in err or "sign in to confirm" in err.lower():
-                    st.error("Rate Limit Detected: Server received HTTP 403. Please retry after a brief delay.")
+                    st.error("Rate Limit Detected: Server received HTTP 403. Try another link or retry after a brief delay.")
                 else:
                     st.error(f"Execution Error: {err}")
