@@ -125,6 +125,15 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 def sanitize_filename(name: str) -> str:
     return re.sub(r'[\\/*?:"<>|]', "", name).strip()
 
+def cleanup_old_files():
+    """Server par purani files delete karke disk space maintain karta hai."""
+    try:
+        for f in glob.glob(f"{DOWNLOAD_DIR}/*"):
+            if not f.endswith(('.part', '.ytdl')):
+                os.remove(f)
+    except Exception:
+        pass
+
 def get_secret_cookie_file():
     try:
         cookies_content = st.secrets.get("YOUTUBE_COOKIES", None)
@@ -161,12 +170,40 @@ def get_secret_cookie_file():
     except Exception:
         return None
 
+def resolve_downloaded_file(video_id: str, clean_title: str, expected_ext: str):
+    """Downloads directory me se processed file reliably locate karta hai."""
+    # 1. Exact match check
+    specific_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.{expected_ext}")
+    if os.path.exists(specific_path):
+        return specific_path, clean_title, expected_ext
+
+    # 2. Match by video_id
+    matches = glob.glob(f"{DOWNLOAD_DIR}/{video_id}.*")
+    valid_files = [f for f in matches if not f.endswith(('.part', '.ytdl'))]
+    if valid_files:
+        target = valid_files[0]
+        ext = target.rsplit('.', 1)[-1].lower()
+        return target, clean_title, ext
+
+    # 3. Fallback: Most recent file
+    all_files = glob.glob(f"{DOWNLOAD_DIR}/*")
+    valid_all = [f for f in all_files if not f.endswith(('.part', '.ytdl', '.txt'))]
+    if valid_all:
+        latest = max(valid_all, key=os.path.getctime)
+        ext = latest.rsplit('.', 1)[-1].lower()
+        return latest, clean_title, ext
+
+    raise FileNotFoundError("Processed output could not be located on disk.")
+
 def run_downloader(url: str, quality_choice: str):
+    cleanup_old_files()
+
     url_lower = url.lower()
     is_instagram = "instagram.com" in url_lower
     is_youtube = "youtube.com" in url_lower or "youtu.be" in url_lower
+    is_audio = quality_choice == "Audio Only (MP3)"
 
-    ydl_opts = {
+    base_opts = {
         'outtmpl': f'{DOWNLOAD_DIR}/%(id)s.%(ext)s',
         'merge_output_format': 'mp4',
         'restrictfilenames': True,
@@ -178,77 +215,66 @@ def run_downloader(url: str, quality_choice: str):
 
     cookie_path = get_secret_cookie_file()
     if cookie_path:
-        ydl_opts['cookiefile'] = cookie_path
+        base_opts['cookiefile'] = cookie_path
 
     if is_instagram:
-        ydl_opts['format'] = 'best'
-        ydl_opts['http_headers'] = {
+        base_opts['format'] = 'best'
+        base_opts['http_headers'] = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
         }
     elif is_youtube:
-        # Client setup that exposes standard formats without dropping adaptive audio
-        ydl_opts['extractor_args'] = {
+        base_opts['extractor_args'] = {
             'youtube': {
-                'player_client': ['ios', 'web', 'android'],
+                'player_client': ['android', 'ios', 'web'],
             }
         }
 
-        # Format rules with guaranteed single-stream fallback
+        # Universal fallback chains - bv* + ba/b/best ensures koi bhi video format unavailable na ho
         if quality_choice == "Best Available (Up to 4K / 1080p)":
-            ydl_opts['format'] = 'bestvideo+bestaudio/best'
+            base_opts['format'] = 'bv*+ba/b/best'
         elif quality_choice == "High Definition (720p)":
-            ydl_opts['format'] = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best'
+            base_opts['format'] = 'bv*[height<=?720]+ba/b[height<=?720]/bv*+ba/b/best'
         elif quality_choice == "Standard Definition (480p)":
-            ydl_opts['format'] = 'bestvideo[height<=480]+bestaudio/best[height<=480]/best'
-        elif quality_choice == "Audio Only (MP3)":
-            ydl_opts['format'] = 'bestaudio/best'
-            ydl_opts['postprocessors'] = [{
+            base_opts['format'] = 'bv*[height<=?480]+ba/b[height<=?480]/bv*+ba/b/best'
+        elif is_audio:
+            base_opts['format'] = 'ba/b/best'
+            base_opts['postprocessors'] = [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
                 'preferredquality': '192',
             }]
     else:
-        ydl_opts['format'] = 'bestvideo+bestaudio/best'
+        base_opts['format'] = 'bv*+ba/b/best'
 
-    # Download execution with auto-fallback to 'best' if requested format triggers any format warning
+    # Double-Pass Execution: Agar primary format selector fail ho, toh fallback pass use karein
+    info = None
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        with yt_dlp.YoutubeDL(base_opts) as ydl:
             info = ydl.extract_info(url, download=True)
-    except Exception as e:
-        if "format" in str(e).lower():
-            ydl_opts['format'] = 'best'
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+    except Exception as primary_error:
+        # Fallback Pass: Kisi bhi format error par 'best' stream uthayega
+        err_text = str(primary_error).lower()
+        if "format" in err_text or "unavailable" in err_text:
+            fallback_opts = dict(base_opts)
+            fallback_opts['format'] = 'best'
+            if is_audio:
+                fallback_opts['postprocessors'] = [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '192',
+                }]
+            with yt_dlp.YoutubeDL(fallback_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
         else:
-            raise e
+            raise primary_error
 
     video_id = info.get('id', 'media')
-    title = info.get('title', 'downloaded_media')
+    title = info.get('title', 'media_file')
     clean_title = sanitize_filename(title)
+    expected_ext = "mp3" if is_audio and is_youtube else "mp4"
 
-    expected_ext = "mp3" if quality_choice == "Audio Only (MP3)" and is_youtube else "mp4"
-
-    # Match files on disk
-    specific_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.{expected_ext}")
-    if os.path.exists(specific_path):
-        return specific_path, clean_title, expected_ext
-
-    matches = glob.glob(f"{DOWNLOAD_DIR}/{video_id}.*")
-    valid_files = [f for f in matches if not f.endswith(('.part', '.ytdl'))]
-    if valid_files:
-        target = valid_files[0]
-        ext = target.rsplit('.', 1)[-1].lower()
-        return target, clean_title, ext
-
-    all_files = glob.glob(f"{DOWNLOAD_DIR}/*")
-    valid_all = [f for f in all_files if not f.endswith(('.part', '.ytdl', '.txt'))]
-    if valid_all:
-        latest = max(valid_all, key=os.path.getctime)
-        ext = latest.rsplit('.', 1)[-1].lower()
-        return latest, clean_title, ext
-
-    raise FileNotFoundError("Stream was processed but the media payload was not saved to disk.")
+    return resolve_downloaded_file(video_id, clean_title, expected_ext)
 
 # --- UI Form ---
 st.markdown("<div class='pro-card'>", unsafe_allow_html=True)
@@ -289,12 +315,14 @@ if process_btn:
                         mime_type = f"video/{ext}"
 
                     with open(file_path, "rb") as f:
-                        st.download_button(
-                            label=f"Download {ext.upper()} File",
-                            data=f.read(),
-                            file_name=f"{title[:45]}.{ext}",
-                            mime=mime_type
-                        )
+                        file_data = f.read()
+
+                    st.download_button(
+                        label=f"Download {ext.upper()} File",
+                        data=file_data,
+                        file_name=f"{title[:45]}.{ext}",
+                        mime=mime_type
+                    )
                 else:
                     st.error("Output generation failed: File missing from storage.")
 
@@ -303,8 +331,8 @@ if process_btn:
                 if "login" in err.lower():
                     st.error("Access Restricted: Instagram authentication required for private media.")
                 elif "403" in err or "sign in to confirm" in err.lower():
-                    st.error("Rate Limit Detected (HTTP 403): Add YOUTUBE_COOKIES to Streamlit Secrets, or try another video link.")
-                elif "152" in err or "unavailable" in err.lower():
-                    st.error("Playback Restricted: This video blocks external embedding or is age-restricted.")
+                    st.error("Rate Limit Detected (HTTP 403): Add YOUTUBE_COOKIES to Streamlit Secrets, or try another link.")
+                elif "152" in err:
+                    st.error("Playback Restricted: This video blocks external embedding.")
                 else:
                     st.error(f"Execution Error: {err}")
