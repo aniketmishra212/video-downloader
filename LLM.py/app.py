@@ -116,7 +116,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Application Header
 st.title("⚡ OmniStream Downloader")
 st.markdown("<div class='sub-heading'>Enterprise-grade media extraction engine for YouTube & Instagram.</div>", unsafe_allow_html=True)
 
@@ -124,11 +123,9 @@ DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 def sanitize_filename(name: str) -> str:
-    """Removes invalid filesystem characters from media titles."""
     return re.sub(r'[\\/*?:"<>|]', "", name).strip()
 
 def get_secret_cookie_file():
-    """Extracts, standardizes, and validates Netscape formatted cookies from Streamlit Secrets."""
     try:
         cookies_content = st.secrets.get("YOUTUBE_COOKIES", None)
         if not cookies_content or not str(cookies_content).strip():
@@ -164,45 +161,11 @@ def get_secret_cookie_file():
     except Exception:
         return None
 
-def execute_yt_dlp(ydl_opts: dict, url: str, quality_choice: str, is_youtube: bool):
-    """Executes download with automatic stream-level fallback to guarantee completion."""
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        video_id = info.get('id', 'media')
-        title = info.get('title', 'downloaded_media')
-        clean_title = sanitize_filename(title)
-
-        expected_ext = "mp3" if quality_choice == "Audio Only (MP3)" and is_youtube else "mp4"
-
-        # 1. Exact match test
-        specific_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.{expected_ext}")
-        if os.path.exists(specific_path):
-            return specific_path, clean_title, expected_ext
-
-        # 2. Wildcard match by video_id
-        matches = glob.glob(f"{DOWNLOAD_DIR}/{video_id}.*")
-        valid_files = [f for f in matches if not f.endswith(('.part', '.ytdl'))]
-        if valid_files:
-            target = valid_files[0]
-            ext = target.rsplit('.', 1)[-1].lower()
-            return target, clean_title, ext
-
-        # 3. Fallback: Most recent file on disk
-        all_files = glob.glob(f"{DOWNLOAD_DIR}/*")
-        valid_all = [f for f in all_files if not f.endswith(('.part', '.ytdl', '.txt'))]
-        if valid_all:
-            latest = max(valid_all, key=os.path.getctime)
-            ext = latest.rsplit('.', 1)[-1].lower()
-            return latest, clean_title, ext
-
-        raise FileNotFoundError("Stream was processed but the media payload was not saved to disk.")
-
 def run_downloader(url: str, quality_choice: str):
     url_lower = url.lower()
     is_instagram = "instagram.com" in url_lower
     is_youtube = "youtube.com" in url_lower or "youtu.be" in url_lower
 
-    # Universal base configuration
     ydl_opts = {
         'outtmpl': f'{DOWNLOAD_DIR}/%(id)s.%(ext)s',
         'merge_output_format': 'mp4',
@@ -224,41 +187,70 @@ def run_downloader(url: str, quality_choice: str):
             'Accept-Language': 'en-US,en;q=0.9',
         }
     elif is_youtube:
+        # Client setup that exposes standard formats without dropping adaptive audio
         ydl_opts['extractor_args'] = {
             'youtube': {
-                'player_client': ['android', 'ios', 'mweb'],
+                'player_client': ['ios', 'web', 'android'],
             }
         }
 
-        # Multi-tiered format selection
+        # Format rules with guaranteed single-stream fallback
         if quality_choice == "Best Available (Up to 4K / 1080p)":
-            ydl_opts['format'] = 'bv*+ba/b/best'
+            ydl_opts['format'] = 'bestvideo+bestaudio/best'
         elif quality_choice == "High Definition (720p)":
-            ydl_opts['format'] = 'bv*[height<=?720]+ba/b[height<=?720]/bv*+ba/b/best'
+            ydl_opts['format'] = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best'
         elif quality_choice == "Standard Definition (480p)":
-            ydl_opts['format'] = 'bv*[height<=?480]+ba/b[height<=?480]/bv*+ba/b/best'
+            ydl_opts['format'] = 'bestvideo[height<=480]+bestaudio/best[height<=480]/best'
         elif quality_choice == "Audio Only (MP3)":
-            ydl_opts['format'] = 'ba/b/best'
+            ydl_opts['format'] = 'bestaudio/best'
             ydl_opts['postprocessors'] = [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
                 'preferredquality': '192',
             }]
     else:
-        ydl_opts['format'] = 'bv*+ba/b/best'
+        ydl_opts['format'] = 'bestvideo+bestaudio/best'
 
-    # Primary execution pass
+    # Download execution with auto-fallback to 'best' if requested format triggers any format warning
     try:
-        return execute_yt_dlp(ydl_opts, url, quality_choice, is_youtube)
-    except Exception as primary_error:
-        # Automatic Recovery Pass: If YouTube format resolution or parser fails, retry with universal 'best' stream
-        err_msg = str(primary_error).lower()
-        if "format" in err_msg or "requested" in err_msg:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+    except Exception as e:
+        if "format" in str(e).lower():
             ydl_opts['format'] = 'best'
-            return execute_yt_dlp(ydl_opts, url, quality_choice, is_youtube)
-        raise primary_error
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+        else:
+            raise e
 
-# --- UI Layout ---
+    video_id = info.get('id', 'media')
+    title = info.get('title', 'downloaded_media')
+    clean_title = sanitize_filename(title)
+
+    expected_ext = "mp3" if quality_choice == "Audio Only (MP3)" and is_youtube else "mp4"
+
+    # Match files on disk
+    specific_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.{expected_ext}")
+    if os.path.exists(specific_path):
+        return specific_path, clean_title, expected_ext
+
+    matches = glob.glob(f"{DOWNLOAD_DIR}/{video_id}.*")
+    valid_files = [f for f in matches if not f.endswith(('.part', '.ytdl'))]
+    if valid_files:
+        target = valid_files[0]
+        ext = target.rsplit('.', 1)[-1].lower()
+        return target, clean_title, ext
+
+    all_files = glob.glob(f"{DOWNLOAD_DIR}/*")
+    valid_all = [f for f in all_files if not f.endswith(('.part', '.ytdl', '.txt'))]
+    if valid_all:
+        latest = max(valid_all, key=os.path.getctime)
+        ext = latest.rsplit('.', 1)[-1].lower()
+        return latest, clean_title, ext
+
+    raise FileNotFoundError("Stream was processed but the media payload was not saved to disk.")
+
+# --- UI Form ---
 st.markdown("<div class='pro-card'>", unsafe_allow_html=True)
 url_input = st.text_input(
     "Media Source URL",
