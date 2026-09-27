@@ -192,27 +192,26 @@ def run_downloader(url: str, quality_choice: str):
     elif is_youtube:
         ydl_opts['extractor_args'] = {
             'youtube': {
-                'player_client': ['ios', 'android', 'mweb'],
-                'player_skip': ['webpage']
+                'player_client': ['android', 'ios', 'web'],
             }
         }
 
-        # Resilient format selection without container locking
+        # Universal format matching (bv* includes combined and standalone streams)
         if quality_choice == "Best Available (Up to 4K / 1080p)":
-            ydl_opts['format'] = 'bestvideo+bestaudio/best'
+            ydl_opts['format'] = 'bv*+ba/b'
         elif quality_choice == "High Definition (720p)":
-            ydl_opts['format'] = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best'
+            ydl_opts['format'] = 'bv*[height<=720]+ba/b[height<=720]/bv*+ba/b'
         elif quality_choice == "Standard Definition (480p)":
-            ydl_opts['format'] = 'bestvideo[height<=480]+bestaudio/best[height<=480]/best'
+            ydl_opts['format'] = 'bv*[height<=480]+ba/b[height<=480]/bv*+ba/b'
         elif quality_choice == "Audio Only (MP3)":
-            ydl_opts['format'] = 'bestaudio/best'
+            ydl_opts['format'] = 'ba/b'
             ydl_opts['postprocessors'] = [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
                 'preferredquality': '192',
             }]
     else:
-        ydl_opts['format'] = 'bestvideo+bestaudio/best'
+        ydl_opts['format'] = 'bv*+ba/b'
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
@@ -227,7 +226,7 @@ def run_downloader(url: str, quality_choice: str):
         if os.path.exists(specific_path):
             return specific_path, clean_title, expected_ext
 
-        # 2. Wildcard match
+        # 2. Wildcard match by video_id
         matches = glob.glob(f"{DOWNLOAD_DIR}/{video_id}.*")
         valid_files = [f for f in matches if not f.endswith(('.part', '.ytdl'))]
         if valid_files:
@@ -235,7 +234,7 @@ def run_downloader(url: str, quality_choice: str):
             ext = target.rsplit('.', 1)[-1].lower()
             return target, clean_title, ext
 
-        # 3. Fallback to newest file
+        # 3. Fallback to most recent file
         all_files = glob.glob(f"{DOWNLOAD_DIR}/*")
         valid_all = [f for f in all_files if not f.endswith(('.part', '.ytdl', '.txt'))]
         if valid_all:
@@ -302,6 +301,6 @@ if process_btn:
                 elif "152" in err or "unavailable" in err.lower():
                     st.error("Playback Restricted: This video blocks playback on external platforms or is age-restricted.")
                 elif "format is not available" in err.lower():
-                    st.error("Format Error: The requested quality stream is unavailable for this specific video. Try a different quality preset.")
+                    st.error("Format Error: Stream format unavailable. Try another preset.")
                 else:
                     st.error(f"Execution Error: {err}")
