@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Page Configuration
+# Page Setup
 st.set_page_config(
     page_title="Wall Maria Media Extractor | Scout Regiment",
     page_icon="⚔️",
@@ -133,6 +133,7 @@ DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 def sanitize_filename(name: str) -> str:
+    """Removes invalid filesystem characters."""
     return re.sub(r'[\\/*?:"<>|]', "", name).strip()
 
 def run_downloader(url: str, quality_choice: str):
@@ -140,6 +141,7 @@ def run_downloader(url: str, quality_choice: str):
     is_instagram = "instagram.com" in url_lower
     is_youtube = "youtube.com" in url_lower or "youtu.be" in url_lower
 
+    # Base configuration with 403 prevention
     ydl_opts = {
         'outtmpl': f'{DOWNLOAD_DIR}/%(id)s.%(ext)s',
         'merge_output_format': 'mp4',
@@ -147,8 +149,9 @@ def run_downloader(url: str, quality_choice: str):
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
+        'http_chunk_size': 10485760,  # 10MB chunking bypasses YouTube throttling 403
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
         }
     }
@@ -159,18 +162,26 @@ def run_downloader(url: str, quality_choice: str):
             ydl_opts['cookiesfrombrowser'] = ('chrome',)
         except Exception:
             pass
+
     elif is_youtube:
+        # mweb and ios clients bypass the YouTube bot block / 403 error
         ydl_opts['extractor_args'] = {
             'youtube': {
-                'player_client': ['android', 'web']
+                'player_client': ['mweb', 'ios'],
+                'skip': ['dash', 'hls']
             }
         }
+        try:
+            ydl_opts['cookiesfrombrowser'] = ('chrome',)
+        except Exception:
+            pass
+
         if quality_choice == "Maximum Titan Force (1080p / 4K)":
             ydl_opts['format'] = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best'
         elif quality_choice == "Standard Scout (720p HD)":
-            ydl_opts['format'] = 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]'
+            ydl_opts['format'] = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best'
         elif quality_choice == "Wall Patrol (480p SD)":
-            ydl_opts['format'] = 'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best[height<=480]'
+            ydl_opts['format'] = 'bestvideo[height<=480]+bestaudio/best[height<=480]/best'
         elif quality_choice == "War Horns Only (MP3 Audio)":
             ydl_opts['format'] = 'bestaudio/best'
             ydl_opts['postprocessors'] = [{
@@ -189,10 +200,12 @@ def run_downloader(url: str, quality_choice: str):
 
         expected_ext = "mp3" if quality_choice == "War Horns Only (MP3 Audio)" and is_youtube else "mp4"
 
+        # 1. Exact match by ID and expected extension
         specific_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.{expected_ext}")
         if os.path.exists(specific_path):
             return specific_path, clean_title, expected_ext
 
+        # 2. Match by video_id
         matches = glob.glob(f"{DOWNLOAD_DIR}/{video_id}.*")
         valid_files = [f for f in matches if not f.endswith(('.part', '.ytdl'))]
         if valid_files:
@@ -200,6 +213,7 @@ def run_downloader(url: str, quality_choice: str):
             ext = target.rsplit('.', 1)[-1].lower()
             return target, clean_title, ext
 
+        # 3. Fallback: pick the latest file in the folder
         all_files = glob.glob(f"{DOWNLOAD_DIR}/*")
         valid_all = [f for f in all_files if not f.endswith(('.part', '.ytdl', '.txt'))]
         if valid_all:
@@ -212,7 +226,7 @@ def run_downloader(url: str, quality_choice: str):
 # UI Form
 st.markdown("<div class='aot-card'>", unsafe_allow_html=True)
 url_input = st.text_input(
-    "Target Reel / Video Coordinates (URL):", 
+    "Target Coordinates (URL):", 
     placeholder="Paste YouTube or Instagram reconnaissance link..."
 )
 
@@ -261,7 +275,7 @@ if fetch_button:
                 err = str(e)
                 if "login" in err.lower():
                     st.error("Titan Barrier: Instagram requires login verification for this coordinate.")
-                elif "sign in to confirm" in err.lower() or "bot" in err.lower():
-                    st.error("Anti-Personnel Gear Detected: YouTube flagged the request. Wait 1 minute and re-engage.")
+                elif "403" in err or "sign in to confirm" in err.lower():
+                    st.error("Military Police Detected (HTTP 403): YouTube temporarily throttled the IP. Try after 1 minute or use a different video link.")
                 else:
                     st.error(f"Recon Mission Failed: {err}")
