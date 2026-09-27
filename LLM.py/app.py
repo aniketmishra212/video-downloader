@@ -116,7 +116,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Application Header
 st.title("⚡ OmniStream Downloader")
 st.markdown("<div class='sub-heading'>High-performance media extraction engine for YouTube & Instagram.</div>", unsafe_allow_html=True)
 
@@ -136,7 +135,6 @@ def get_secret_cookie_file():
 
         content = str(cookies_content).strip()
 
-        # Netscape standard header guarantee
         netscape_header = (
             "# Netscape HTTP Cookie File\n"
             "# http://curl.haxx.se/rfc/cookie_spec.html\n"
@@ -145,7 +143,6 @@ def get_secret_cookie_file():
         if not content.startswith("# Netscape HTTP Cookie File"):
             content = f"{netscape_header}\n{content}"
 
-        # Ensure tabs separation integrity
         lines = []
         for line in content.splitlines():
             line_str = line.strip()
@@ -154,7 +151,6 @@ def get_secret_cookie_file():
             if line_str.startswith("#"):
                 lines.append(line_str)
             else:
-                # If space separated instead of tabs, convert whitespace runs to tabs
                 if "\t" not in line_str:
                     line_str = re.sub(r'\s+', '\t', line_str)
                 lines.append(line_str)
@@ -173,7 +169,6 @@ def run_downloader(url: str, quality_choice: str):
     is_instagram = "instagram.com" in url_lower
     is_youtube = "youtube.com" in url_lower or "youtu.be" in url_lower
 
-    # Base configuration
     ydl_opts = {
         'outtmpl': f'{DOWNLOAD_DIR}/%(id)s.%(ext)s',
         'merge_output_format': 'mp4',
@@ -181,14 +176,13 @@ def run_downloader(url: str, quality_choice: str):
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
-        'http_chunk_size': 10485760,  # 10MB chunking bypasses mid-stream drop
+        'http_chunk_size': 10485760,
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
         }
     }
 
-    # Safely attach cookies file if available
     cookie_path = get_secret_cookie_file()
     if cookie_path:
         ydl_opts['cookiefile'] = cookie_path
@@ -196,16 +190,16 @@ def run_downloader(url: str, quality_choice: str):
     if is_instagram:
         ydl_opts['format'] = 'best'
     elif is_youtube:
-        # Multi-client emulation chain for cloud IPs
+        # iOS and Android clients bypass error 152 (embedding disabled) and bot block
         ydl_opts['extractor_args'] = {
             'youtube': {
-                'player_client': ['web_embedded', 'android_creator', 'ios'],
-                'player_skip': ['webpage', 'configs']
+                'player_client': ['ios', 'android', 'mweb'],
+                'player_skip': ['webpage']
             }
         }
 
         if quality_choice == "Best Available (Up to 4K / 1080p)":
-            ydl_opts['format'] = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best'
+            ydl_opts['format'] = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best[ext=mp4]/best'
         elif quality_choice == "High Definition (720p)":
             ydl_opts['format'] = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best'
         elif quality_choice == "Standard Definition (480p)":
@@ -228,12 +222,10 @@ def run_downloader(url: str, quality_choice: str):
 
         expected_ext = "mp3" if quality_choice == "Audio Only (MP3)" and is_youtube else "mp4"
 
-        # 1. Exact match by ID and expected extension
         specific_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.{expected_ext}")
         if os.path.exists(specific_path):
             return specific_path, clean_title, expected_ext
 
-        # 2. Match by video_id
         matches = glob.glob(f"{DOWNLOAD_DIR}/{video_id}.*")
         valid_files = [f for f in matches if not f.endswith(('.part', '.ytdl'))]
         if valid_files:
@@ -241,7 +233,6 @@ def run_downloader(url: str, quality_choice: str):
             ext = target.rsplit('.', 1)[-1].lower()
             return target, clean_title, ext
 
-        # 3. Fallback: most recently modified file in directory
         all_files = glob.glob(f"{DOWNLOAD_DIR}/*")
         valid_all = [f for f in all_files if not f.endswith(('.part', '.ytdl', '.txt'))]
         if valid_all:
@@ -305,5 +296,7 @@ if process_btn:
                     st.error("Access Restricted: Instagram authentication required for private media.")
                 elif "403" in err or "sign in to confirm" in err.lower():
                     st.error("Rate Limit Detected (HTTP 403): Try another video link or check Streamlit Secrets cookies.")
+                elif "152" in err or "unavailable" in err.lower():
+                    st.error("Playback Restricted: This video blocks playback on external platforms or is age-restricted.")
                 else:
                     st.error(f"Execution Error: {err}")
