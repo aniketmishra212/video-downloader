@@ -9,125 +9,122 @@ load_dotenv()
 
 # Page Setup
 st.set_page_config(
-    page_title="Wall Maria Media Extractor | Scout Regiment",
-    page_icon="⚔️",
+    page_title="OmniStream | Professional Media Downloader",
+    page_icon="⚡",
     layout="centered"
 )
 
-# Custom Attack on Titan Aesthetic CSS
+# Professional SaaS Dark Theme Styling
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700;900&family=Crimson+Text:ital,wght@0,400;0,700;1,400&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
-    /* Global Dark Medieval / Survey Corps Atmosphere */
+    html, body, [class*="css"] {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
     .stApp {
-        background: radial-gradient(circle at 50% 20%, #1e261f 0%, #0d120e 70%, #050806 100%);
-        color: #e5dac1;
-        font-family: 'Crimson Text', serif;
+        background-color: #0b0f17;
+        color: #f1f5f9;
     }
 
-    /* Survey Corps Crest Banner & Titles */
-    h1 {
-        font-family: 'Cinzel', serif !important;
-        font-weight: 900 !important;
-        color: #c9a050 !important;
-        text-shadow: 2px 2px 10px rgba(0, 0, 0, 0.9), 0 0 15px rgba(201, 160, 80, 0.4);
-        text-transform: uppercase;
-        letter-spacing: 3px;
-        text-align: center;
-        border-bottom: 2px solid #5a4625;
-        padding-bottom: 12px;
-        margin-top: 10px;
-    }
-
-    .subtitle-box {
-        text-align: center;
-        font-family: 'Cinzel', serif;
-        font-size: 14px;
-        letter-spacing: 2px;
-        color: #799a77;
-        margin-bottom: 25px;
-    }
-
-    /* Tactical Military Card Box */
-    .aot-card {
-        background: rgba(18, 24, 19, 0.85);
-        border: 2px solid #735930;
-        box-shadow: 0 0 20px rgba(0, 0, 0, 0.8), inset 0 0 15px rgba(0, 0, 0, 0.6);
+    /* Clean Card Container */
+    .pro-card {
+        background: #111827;
+        border: 1px solid #1f2937;
+        border-radius: 12px;
         padding: 24px;
-        border-radius: 4px;
-        margin-bottom: 20px;
+        margin-bottom: 24px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
     }
 
-    /* Input Field - Military Parchment */
+    /* Professional Headings */
+    h1 {
+        font-weight: 700 !important;
+        font-size: 28px !important;
+        color: #ffffff !important;
+        letter-spacing: -0.5px !important;
+        margin-bottom: 4px !important;
+    }
+
+    .sub-heading {
+        color: #94a3b8;
+        font-size: 14px;
+        font-weight: 400;
+        margin-bottom: 24px;
+    }
+
+    /* Input Fields */
     .stTextInput>div>div>input {
-        background-color: #121813 !important;
-        color: #e8dcc4 !important;
-        border: 1px solid #735930 !important;
-        border-radius: 2px !important;
-        font-family: 'Crimson Text', serif !important;
-        font-size: 17px !important;
-        box-shadow: inset 0 0 5px rgba(0,0,0,0.8);
+        background-color: #1e293b !important;
+        color: #ffffff !important;
+        border: 1px solid #334155 !important;
+        border-radius: 8px !important;
+        font-size: 14px !important;
+        padding: 10px 14px !important;
+        transition: border-color 0.2s;
     }
     .stTextInput>div>div>input:focus {
-        border: 1px solid #c9a050 !important;
-        box-shadow: 0 0 10px rgba(201, 160, 80, 0.3) !important;
+        border-color: #3b82f6 !important;
+        box-shadow: 0 0 0 1px #3b82f6 !important;
     }
 
-    /* Dropdown Selector */
+    /* Selectbox Dropdown */
     .stSelectbox>div>div {
-        background-color: #121813 !important;
-        color: #e8dcc4 !important;
-        border: 1px solid #735930 !important;
-        border-radius: 2px !important;
+        background-color: #1e293b !important;
+        color: #ffffff !important;
+        border: 1px solid #334155 !important;
+        border-radius: 8px !important;
+        font-size: 14px !important;
     }
 
-    /* Scout Regiment Golden Blades Button */
+    /* Primary Processing Button */
     .stButton>button {
-        font-family: 'Cinzel', serif !important;
-        font-size: 16px !important;
-        font-weight: 700 !important;
-        letter-spacing: 2px !important;
-        background: linear-gradient(180deg, #445942 0%, #20311f 100%) !important;
-        color: #f4ecd8 !important;
-        border: 2px solid #c9a050 !important;
-        border-radius: 3px !important;
-        padding: 10px 24px !important;
+        background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%) !important;
+        color: #ffffff !important;
+        font-weight: 600 !important;
+        font-size: 14px !important;
+        border: none !important;
+        border-radius: 8px !important;
+        padding: 10px 20px !important;
         width: 100% !important;
-        transition: all 0.3s ease;
-        text-shadow: 1px 1px 3px black;
-        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.6);
+        transition: all 0.2s ease-in-out !important;
+        box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3) !important;
     }
     .stButton>button:hover {
-        background: linear-gradient(180deg, #597756 0%, #2a4129 100%) !important;
-        border-color: #ffd700 !important;
-        box-shadow: 0 0 15px rgba(201, 160, 80, 0.6) !important;
+        background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%) !important;
+        box-shadow: 0 4px 12px rgba(37, 99, 235, 0.45) !important;
         transform: translateY(-1px);
     }
 
-    /* Download Finished Button */
+    /* Download Deliverable Button */
     .stDownloadButton>button {
-        font-family: 'Cinzel', serif !important;
-        font-weight: 700 !important;
-        background: linear-gradient(180deg, #8c6827 0%, #4f3b14 100%) !important;
+        background: #059669 !important;
         color: #ffffff !important;
-        border: 2px solid #e5c365 !important;
-        border-radius: 3px !important;
+        font-weight: 600 !important;
+        font-size: 14px !important;
+        border: none !important;
+        border-radius: 8px !important;
         width: 100% !important;
+        padding: 10px 20px !important;
+        box-shadow: 0 2px 8px rgba(5, 150, 105, 0.3) !important;
+    }
+    .stDownloadButton>button:hover {
+        background: #047857 !important;
+        transform: translateY(-1px);
     }
 
-    /* Streamlit labels */
     label {
-        font-family: 'Cinzel', serif !important;
-        color: #c9a050 !important;
-        letter-spacing: 1px;
+        font-size: 13px !important;
+        font-weight: 500 !important;
+        color: #cbd5e1 !important;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# AOT Header
-st.markdown("<h1>⚔️ Scout Regiment Dispatch</h1>", unsafe_allow_html=True)
-st.markdown("<div class='subtitle-box'>SHINZOU WO SASAGEYO • RETRIEVE ARCHIVED VISUALS BEYOND THE WALLS</div>", unsafe_allow_html=True)
+# Application Header
+st.title("⚡ OmniStream Downloader")
+st.markdown("<div class='sub-heading'>High-performance media extraction engine for YouTube & Instagram.</div>", unsafe_allow_html=True)
 
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -141,7 +138,6 @@ def run_downloader(url: str, quality_choice: str):
     is_instagram = "instagram.com" in url_lower
     is_youtube = "youtube.com" in url_lower or "youtu.be" in url_lower
 
-    # Base configuration with 403 prevention
     ydl_opts = {
         'outtmpl': f'{DOWNLOAD_DIR}/%(id)s.%(ext)s',
         'merge_output_format': 'mp4',
@@ -149,7 +145,7 @@ def run_downloader(url: str, quality_choice: str):
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
-        'http_chunk_size': 10485760,  # 10MB chunking bypasses YouTube throttling 403
+        'http_chunk_size': 10485760,  # 10MB chunking prevents mid-stream 403 throttling
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
@@ -158,31 +154,21 @@ def run_downloader(url: str, quality_choice: str):
 
     if is_instagram:
         ydl_opts['format'] = 'best'
-        try:
-            ydl_opts['cookiesfrombrowser'] = ('chrome',)
-        except Exception:
-            pass
-
     elif is_youtube:
-        # mweb and ios clients bypass the YouTube bot block / 403 error
         ydl_opts['extractor_args'] = {
             'youtube': {
                 'player_client': ['mweb', 'ios'],
                 'skip': ['dash', 'hls']
             }
         }
-        try:
-            ydl_opts['cookiesfrombrowser'] = ('chrome',)
-        except Exception:
-            pass
 
-        if quality_choice == "Maximum Titan Force (1080p / 4K)":
+        if quality_choice == "Best Available (Up to 4K / 1080p)":
             ydl_opts['format'] = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best'
-        elif quality_choice == "Standard Scout (720p HD)":
+        elif quality_choice == "High Definition (720p)":
             ydl_opts['format'] = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best'
-        elif quality_choice == "Wall Patrol (480p SD)":
+        elif quality_choice == "Standard Definition (480p)":
             ydl_opts['format'] = 'bestvideo[height<=480]+bestaudio/best[height<=480]/best'
-        elif quality_choice == "War Horns Only (MP3 Audio)":
+        elif quality_choice == "Audio Only (MP3)":
             ydl_opts['format'] = 'bestaudio/best'
             ydl_opts['postprocessors'] = [{
                 'key': 'FFmpegExtractAudio',
@@ -195,17 +181,16 @@ def run_downloader(url: str, quality_choice: str):
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
         video_id = info.get('id')
-        title = info.get('title', 'scout_intel')
+        title = info.get('title', 'media_file')
         clean_title = sanitize_filename(title)
 
-        expected_ext = "mp3" if quality_choice == "War Horns Only (MP3 Audio)" and is_youtube else "mp4"
+        expected_ext = "mp3" if quality_choice == "Audio Only (MP3)" and is_youtube else "mp4"
 
-        # 1. Exact match by ID and expected extension
+        # Check matched file
         specific_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.{expected_ext}")
         if os.path.exists(specific_path):
             return specific_path, clean_title, expected_ext
 
-        # 2. Match by video_id
         matches = glob.glob(f"{DOWNLOAD_DIR}/{video_id}.*")
         valid_files = [f for f in matches if not f.endswith(('.part', '.ytdl'))]
         if valid_files:
@@ -213,7 +198,6 @@ def run_downloader(url: str, quality_choice: str):
             ext = target.rsplit('.', 1)[-1].lower()
             return target, clean_title, ext
 
-        # 3. Fallback: pick the latest file in the folder
         all_files = glob.glob(f"{DOWNLOAD_DIR}/*")
         valid_all = [f for f in all_files if not f.endswith(('.part', '.ytdl', '.txt'))]
         if valid_all:
@@ -221,38 +205,38 @@ def run_downloader(url: str, quality_choice: str):
             ext = latest.rsplit('.', 1)[-1].lower()
             return latest, clean_title, ext
 
-        raise FileNotFoundError("Visual parchment could not be located inside the archives.")
+        raise FileNotFoundError("Processed output could not be located on disk.")
 
-# UI Form
-st.markdown("<div class='aot-card'>", unsafe_allow_html=True)
+# Input Panel
+st.markdown("<div class='pro-card'>", unsafe_allow_html=True)
 url_input = st.text_input(
-    "Target Coordinates (URL):", 
-    placeholder="Paste YouTube or Instagram reconnaissance link..."
+    "Media Source URL", 
+    placeholder="https://www.youtube.com/watch?v=... or https://www.instagram.com/reel/..."
 )
 
 quality_option = st.selectbox(
-    "Select Tactical Output Quality:",
+    "Export Preset",
     [
-        "Maximum Titan Force (1080p / 4K)",
-        "Standard Scout (720p HD)",
-        "Wall Patrol (480p SD)",
-        "War Horns Only (MP3 Audio)"
+        "Best Available (Up to 4K / 1080p)",
+        "High Definition (720p)",
+        "Standard Definition (480p)",
+        "Audio Only (MP3)"
     ]
 )
 
-fetch_button = st.button("⚔️ INITIATE RETRIEVAL (SASAGEYO)")
+process_btn = st.button("Extract & Process Stream")
 st.markdown("</div>", unsafe_allow_html=True)
 
-if fetch_button:
+if process_btn:
     if not url_input.strip():
-        st.warning("Commander! Provide a valid target URL first.")
+        st.warning("Please provide a valid media link to proceed.")
     else:
-        with st.spinner("ODM Gear Engaged... Breaching the firewall and securing the video stream..."):
+        with st.spinner("Processing media streams and preparing payload..."):
             try:
                 file_path, title, ext = run_downloader(url_input.strip(), quality_option)
 
                 if os.path.exists(file_path):
-                    st.success(f"Intel Secured: **{title}**")
+                    st.success(f"Stream Ready: **{title}**")
 
                     if ext == "mp3":
                         st.audio(file_path)
@@ -263,19 +247,19 @@ if fetch_button:
 
                     with open(file_path, "rb") as f:
                         st.download_button(
-                            label=f"🛡️ SECURE {ext.upper()} ARCHIVE TO DEVICE",
+                            label=f"Download {ext.upper()} File",
                             data=f.read(),
-                            file_name=f"{title[:40]}.{ext}",
+                            file_name=f"{title[:45]}.{ext}",
                             mime=mime_type
                         )
                 else:
-                    st.error("Operation Failed: File missing from Wall archives.")
+                    st.error("Output generation failed: File missing from storage.")
 
             except Exception as e:
                 err = str(e)
                 if "login" in err.lower():
-                    st.error("Titan Barrier: Instagram requires login verification for this coordinate.")
+                    st.error("Access Restricted: Instagram authentication required for private media.")
                 elif "403" in err or "sign in to confirm" in err.lower():
-                    st.error("Military Police Detected (HTTP 403): YouTube temporarily throttled the IP. Try after 1 minute or use a different video link.")
+                    st.error("Rate Limit Detected: Server received HTTP 403. Please retry after a brief delay.")
                 else:
-                    st.error(f"Recon Mission Failed: {err}")
+                    st.error(f"Execution Error: {err}")
